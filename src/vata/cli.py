@@ -4,7 +4,15 @@ import webbrowser
 import threading
 import time
 
+# Create the Typer app with an explicit name to avoid auto-merging
 app = typer.Typer(help="Vata CLI - Local-First Knowledge Graph")
+
+# Define a main callback. This ensures 'vata' remains a command 
+# container and subcommands like 'start' are explicitly required.
+@app.callback()
+def main():
+    """Knowledge Graph management on your local machine."""
+    pass
 
 def open_browser():
     """Wait for server to start, then open the browser."""
@@ -24,6 +32,7 @@ def start(
     threading.Thread(target=open_browser, daemon=True).start()
     
     # Launch Uvicorn
+    # Note: Using "vata.main:app" string format allows --reload to work
     uvicorn.run("vata.main:app", host=host, port=port, reload=reload)
 
 if __name__ == "__main__":

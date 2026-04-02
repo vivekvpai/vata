@@ -19,15 +19,17 @@ app.include_router(api_router)
 # Locate the frontend_dist directory relative to this file
 FRONTEND_DIR = Path(__file__).parent / "frontend_dist"
 
-# Check if the frontend has been built yet
-if FRONTEND_DIR.exists() and any(FRONTEND_DIR.iterdir()):
+# Check if the frontend has been built (requires index.html)
+INDEX_FILE = FRONTEND_DIR / "index.html"
+
+if INDEX_FILE.exists():
     # Mount the built frontend files
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
 
     # Fallback to index.html for Single Page Application (SPA) routing
     @app.exception_handler(404)
     async def not_found_handler(request, exc):
-        return FileResponse(FRONTEND_DIR / "index.html")
+        return FileResponse(str(INDEX_FILE))
 else:
     # Error message when frontend is not built
     @app.get("/")

@@ -1,46 +1,53 @@
-import React from 'react';
-import { NavLink } from 'react-router-dom';
-import { Home, History, FilePlus, LogOut } from 'lucide-react';
-import { motion } from 'framer-motion';
+import React from "react";
+import { NavLink } from "react-router-dom";
+import { Home, History, FilePlus, LogOut } from "lucide-react";
+import logo from "../assets/icon.png";
 
 const Navigation = () => {
   const navItems = [
-    { title: 'Home', path: '/', icon: Home },
-    { title: 'History', path: '/history', icon: History },
-    { title: 'Form', path: '/form', icon: FilePlus },
+    { title: "Home", path: "/", icon: Home },
+    { title: "History", path: "/history", icon: History },
+    { title: "Form", path: "/form", icon: FilePlus },
   ];
 
   return (
-    <nav 
+    <nav
       style={{
-        width: 'var(--sidebar-width)',
-        height: 'calc(100vh - 32px)',
-        margin: '16px',
-        position: 'fixed',
+        width: "var(--sidebar-width)",
+        height: "calc(100vh - 32px)",
+        margin: "16px",
+        position: "fixed",
         left: 0,
         top: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        padding: '24px 16px',
-        zIndex: 50
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        padding: "24px 16px",
+        zIndex: 50,
       }}
       className="glass-premium"
     >
       <div>
-        <div style={{ padding: '0 8px 32px 8px' }}>
-          <h1 style={{ 
-            fontSize: '1.5rem', 
-            fontWeight: 700, 
-            background: 'linear-gradient(to right, var(--accent), #ffa64d)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            letterSpacing: '1px',
-            textAlign: 'center'
-          }}>V</h1>
+        <div
+          style={{
+            padding: "0 8px 32px 8px",
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
+          <img
+            src={logo}
+            alt="Logo"
+            style={{
+              width: "40px",
+              height: "40px",
+              objectFit: "contain",
+              filter: "drop-shadow(0 0 10px var(--accent))",
+            }}
+          />
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {navItems.map((item) => (
             <NavLink
               key={item.path}
@@ -48,16 +55,21 @@ const Navigation = () => {
               title={item.title}
               aria-label={item.title}
               style={({ isActive }) => ({
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '12px',
-                borderRadius: '12px',
-                textDecoration: 'none',
-                color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                background: isActive ? 'var(--glass-bg)' : 'transparent',
-                border: isActive ? '1px solid var(--glass-border)' : '1px solid transparent',
-                transition: 'background 0.2s ease, color 0.2s ease, border 0.2s ease',
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "12px",
+                borderRadius: "12px",
+                textDecoration: "none",
+                color: isActive
+                  ? "var(--text-primary)"
+                  : "var(--text-secondary)",
+                background: isActive ? "var(--glass-bg)" : "transparent",
+                border: isActive
+                  ? "1px solid var(--glass-border)"
+                  : "1px solid transparent",
+                transition:
+                  "background 0.2s ease, color 0.2s ease, border 0.2s ease",
               })}
             >
               <item.icon size={24} strokeWidth={2} aria-hidden="true" />
@@ -66,21 +78,23 @@ const Navigation = () => {
         </div>
       </div>
 
-      <div style={{ padding: '0 8px', display: 'flex', justifyContent: 'center' }}>
-        <button 
+      <div
+        style={{ padding: "0 8px", display: "flex", justifyContent: "center" }}
+      >
+        <button
           title="Settings"
           aria-label="Settings"
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '12px',
-            width: '100%',
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--text-secondary)',
-            cursor: 'not-allowed',
-            transition: 'color 0.2s ease',
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "12px",
+            width: "100%",
+            background: "transparent",
+            border: "none",
+            color: "var(--text-secondary)",
+            cursor: "not-allowed",
+            transition: "color 0.2s ease",
           }}
         >
           <LogOut size={24} aria-hidden="true" />

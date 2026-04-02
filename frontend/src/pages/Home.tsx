@@ -196,7 +196,7 @@ const HierarchicalTree: React.FC<{ data: TreeNode }> = ({ data }) => {
                 background: "var(--accent)",
               }}
             />{" "}
-            Orchestrator
+            Category
           </div>
           <div
             style={{
@@ -215,7 +215,7 @@ const HierarchicalTree: React.FC<{ data: TreeNode }> = ({ data }) => {
                 background: "rgba(255, 255, 255, 0.2)",
               }}
             />{" "}
-            Agent
+            Asset
           </div>
         </div>
 
@@ -248,13 +248,15 @@ const HierarchicalTree: React.FC<{ data: TreeNode }> = ({ data }) => {
   );
 };
 
+import logo from '../assets/images/logo2.png';
+
 const Home = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
       role: "assistant",
       content:
-        "Hello! I am Vata. I design hierarchical orchestration systems. Tell me your project goal.",
+        "Hello! I am Vata. I help you store, search, and summarize your digital assets—links, text, and names. What would you like to retrieve today?",
       type: "text",
     },
   ]);
@@ -277,15 +279,15 @@ const Home = () => {
 
     setTimeout(() => {
       const tree: TreeNode = {
-        name: "CORE AGENT",
+        name: "KNOWLEDGE BASE",
         children: [
           {
-            name: "FRONTEND",
-            children: [{ name: "DESIGNER" }, { name: "CODER" }],
+            name: "ASSETS",
+            children: [{ name: "LINKS" }, { name: "TEXT" }],
           },
           {
-            name: "BACKEND",
-            children: [{ name: "DB MGR" }, { name: "API MGR" }],
+            name: "SUMMARIES",
+            children: [{ name: "AI INSIGHTS" }, { name: "REPORTS" }],
           },
         ],
       };
@@ -296,7 +298,7 @@ const Home = () => {
           id: (Date.now() + 1).toString(),
           role: "assistant",
           content:
-            "I have mapped out the hierarchy for your request. This infrastructure optimizes communication between specialized agents.",
+            "I've found relevant assets and summarized them for you. You can see how they are connected in the map below.",
           type: "tree",
           treeData: tree,
           showAction: true,
@@ -315,21 +317,35 @@ const Home = () => {
         margin: "0 auto",
       }}
     >
-      <div style={{ paddingBottom: "24px" }}>
-        <h1
-          style={{
-            fontSize: "2.5rem",
-            fontWeight: 800,
-            background: "linear-gradient(to bottom, #ffffff, #888888)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-          }}
-        >
-          Vata AI
-        </h1>
-        <p style={{ color: "var(--text-secondary)", fontSize: "1rem" }}>
-          Hierarchical Multi-Agent Infrastructure.
-        </p>
+      <div style={{ paddingBottom: "24px", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "20px" }}>
+        <img 
+          src={logo} 
+          alt="Vata Logo" 
+          style={{ 
+            width: '120px', 
+            height: 'auto', 
+            borderRadius: '20px',
+            boxShadow: '0 10px 40px rgba(255, 122, 26, 0.2)',
+            border: '1px solid var(--glass-border)'
+          }} 
+        />
+        <div>
+          <h1
+            style={{
+              fontSize: "2.5rem",
+              fontWeight: 800,
+              background: "linear-gradient(to bottom, #ffffff, #888888)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              margin: 0
+            }}
+          >
+            Vata Memory
+          </h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: "1rem", marginTop: "8px" }}>
+            Digital asset tree
+          </p>
+        </div>
       </div>
 
       {/* Main chat section - No internal scroll, grows naturally */}
@@ -552,7 +568,7 @@ const Home = () => {
                 handleSend();
               }
             }}
-            placeholder="Describe your mission…"
+            placeholder="Search, summarize, or add assets…"
             rows={3}
             style={{
               flex: 1,
