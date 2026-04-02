@@ -43,6 +43,29 @@ vata start
 
 The application will be available at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
+## Development
+
+For a live development experience with hot-reloading on both frontend and backend:
+
+### 1. Start the Backend (FastAPI)
+
+From the **root directory** (not the `frontend` folder):
+
+```bash
+uvicorn vata.main:app --app-dir src --reload --port 8000
+```
+
+### 2. Start the Frontend (Vite)
+
+In a **new terminal window**, navigate to the `frontend` directory:
+
+```bash
+cd frontend
+npm run dev
+```
+
+The frontend will be available at [http://localhost:5173](http://localhost:5173). It is pre-configured to proxy API requests to the backend on port 8000.
+
 ## Tech Stack
 
 - **Backend**: Python 3.12, FastAPI, Uvicorn, Typer.
