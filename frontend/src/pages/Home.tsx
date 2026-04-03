@@ -248,18 +248,11 @@ const HierarchicalTree: React.FC<{ data: TreeNode }> = ({ data }) => {
   );
 };
 
-import logo from '../assets/images/logo2.png';
+import logo from "../assets/images/logo2.png";
+import icon from "../assets/icon.png";
 
 const Home = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content:
-        "Hello! I am Vata. I help you store, search, and summarize your digital assets—links, text, and names. What would you like to retrieve today?",
-      type: "text",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -317,38 +310,7 @@ const Home = () => {
         margin: "0 auto",
       }}
     >
-      <div style={{ paddingBottom: "24px", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "20px" }}>
-        <img 
-          src={logo} 
-          alt="Vata Logo" 
-          style={{ 
-            width: '120px', 
-            height: 'auto', 
-            borderRadius: '20px',
-            boxShadow: '0 10px 40px rgba(255, 122, 26, 0.2)',
-            border: '1px solid var(--glass-border)'
-          }} 
-        />
-        <div>
-          <h1
-            style={{
-              fontSize: "2.5rem",
-              fontWeight: 800,
-              background: "linear-gradient(to bottom, #ffffff, #888888)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              margin: 0
-            }}
-          >
-            Vata Memory
-          </h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: "1rem", marginTop: "8px" }}>
-            Digital asset tree
-          </p>
-        </div>
-      </div>
-
-      {/* Main chat section - No internal scroll, grows naturally */}
+      {/* Main chat section */}
       <div
         style={{
           flex: 1,
@@ -356,129 +318,88 @@ const Home = () => {
           flexDirection: "column",
           gap: "40px",
           padding: "24px 0",
+          position: "relative",
         }}
       >
-        <AnimatePresence>
-          {messages.map((msg) => (
+        {messages.length === 0 ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.75 }}
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "100%",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              textAlign: "center",
+              padding: "20px",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+          >
             <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
+              animate={{
+                scale: [1, 1.05, 1],
+                y: [0, -10, 0],
+              }}
+              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+              style={{
+                width: "clamp(100px, 15vw, 160px)",
+                height: "clamp(100px, 15vw, 160px)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: "32px",
+              }}
             >
-              {msg.role === "assistant" ? (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "20px",
-                    width: "100%",
-                    padding: "0 10px",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "36px",
-                      height: "36px",
-                      borderRadius: "10px",
-                      background: "var(--accent)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                      marginTop: "4px",
-                    }}
-                  >
-                    <Bot size={20} color="white" aria-hidden="true" />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <p
-                      style={{
-                        color: "#ffffff",
-                        fontSize: "1.05rem",
-                        lineHeight: 1.7,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {msg.content}
-                    </p>
-                    {msg.type === "tree" && msg.treeData && (
-                      <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.2 }}
-                      >
-                        <HierarchicalTree data={msg.treeData} />
-                        {msg.showAction && (
-                          <div
-                            style={{
-                              marginTop: "24px",
-                              display: "flex",
-                              gap: "16px",
-                            }}
-                          >
-                            <button
-                              onClick={() => handleSend("Accept this plan.")}
-                              aria-label="Confirm orchestration plan"
-                              style={{
-                                padding: "10px 24px",
-                                background: "var(--accent)",
-                                border: "none",
-                                borderRadius: "10px",
-                                color: "white",
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "8px",
-                                transition:
-                                  "background 0.2s ease, transform 0.1s ease",
-                              }}
-                            >
-                              <Check size={18} aria-hidden="true" />
-                              <span>Confirm Plan</span>
-                            </button>
-                            <button
-                              onClick={() => handleSend("Reject this plan.")}
-                              aria-label="Reject orchestration plan"
-                              style={{
-                                padding: "10px 24px",
-                                background: "rgba(255, 255, 255, 0.05)",
-                                border: "1px solid var(--glass-border)",
-                                borderRadius: "10px",
-                                color: "var(--text-secondary)",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "8px",
-                                transition:
-                                  "background 0.2s ease, border-color 0.2s ease",
-                              }}
-                            >
-                              <X size={18} aria-hidden="true" />
-                              <span>Reject Plan</span>
-                            </button>
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "flex-end",
-                    width: "100%",
-                    padding: "0 10px",
-                  }}
-                >
+              <img
+                src={icon}
+                alt="Vata Icon Overlay"
+                style={{ width: "100%", height: "100%", objectFit: "contain" }}
+              />
+            </motion.div>
+            <h2
+              style={{
+                fontSize: "clamp(1.5rem, 4vw, 2.2rem)",
+                fontWeight: 800,
+                color: "white",
+                marginBottom: "8px",
+              }}
+            >
+              VATA
+            </h2>
+            <p
+              style={{
+                fontSize: "clamp(0.9rem, 1.5vw, 1rem)",
+                color: "var(--text-secondary)",
+                maxWidth: "600px",
+                letterSpacing: "2px",
+                textTransform: "uppercase",
+              }}
+            >
+              Digital asset tree
+            </p>
+          </motion.div>
+        ) : (
+          <AnimatePresence>
+            {messages.map((msg) => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                {msg.role === "assistant" ? (
                   <div
                     style={{
                       display: "flex",
-                      gap: "16px",
-                      maxWidth: "80%",
-                      flexDirection: "row-reverse",
+                      gap: "20px",
+                      width: "100%",
+                      padding: "0 10px",
                     }}
                   >
                     <div
@@ -486,44 +407,176 @@ const Home = () => {
                         width: "36px",
                         height: "36px",
                         borderRadius: "10px",
-                        background: "rgba(255, 255, 255, 0.1)",
+                        background: "rgba(255, 255, 255, 0.05)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
                         flexShrink: 0,
+                        marginTop: "4px",
+                        overflow: "hidden",
+                        border: "1px solid var(--glass-border)",
                       }}
                     >
-                      <User size={20} color="white" aria-hidden="true" />
+                      <img
+                        src={icon}
+                        alt="AI avatar"
+                        style={{
+                          width: "22px",
+                          height: "22px",
+                          objectFit: "contain",
+                        }}
+                      />
                     </div>
-                    <div
-                      className="glass"
-                      style={{
-                        padding: "16px 20px",
-                        borderRadius: "20px",
-                        borderTopRightRadius: "4px",
-                        background: "rgba(255, 122, 26, 0.1)",
-                        border: "1px solid rgba(255, 122, 26, 0.3)",
-                      }}
-                    >
+                    <div style={{ flex: 1 }}>
                       <p
                         style={{
                           color: "#ffffff",
-                          fontSize: "1rem",
-                          lineHeight: 1.6,
+                          fontSize: "1.05rem",
+                          lineHeight: 1.7,
                           whiteSpace: "pre-wrap",
-                          overflowWrap: "break-word",
-                          minWidth: 0,
                         }}
                       >
                         {msg.content}
                       </p>
+                      {msg.type === "tree" && msg.treeData && (
+                        <motion.div
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ delay: 0.2 }}
+                        >
+                          <HierarchicalTree data={msg.treeData} />
+                          {msg.showAction && (
+                            <div
+                              style={{
+                                marginTop: "24px",
+                                display: "flex",
+                                gap: "16px",
+                              }}
+                            >
+                              <button
+                                onClick={() => handleSend("Accept this plan.")}
+                                aria-label="Confirm orchestration plan"
+                                style={{
+                                  padding: "10px 24px",
+                                  background: "var(--accent)",
+                                  border: "none",
+                                  borderRadius: "10px",
+                                  color: "white",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                  transition:
+                                    "background 0.2s ease, transform 0.1s ease",
+                                }}
+                              >
+                                <Check size={18} aria-hidden="true" />
+                                <span>Confirm Plan</span>
+                              </button>
+                              <button
+                                onClick={() => handleSend("Reject this plan.")}
+                                aria-label="Reject orchestration plan"
+                                style={{
+                                  padding: "10px 24px",
+                                  background: "rgba(255, 255, 255, 0.05)",
+                                  border: "1px solid var(--glass-border)",
+                                  borderRadius: "10px",
+                                  color: "var(--text-secondary)",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                  transition:
+                                    "background 0.2s ease, border-color 0.2s ease",
+                                }}
+                              >
+                                <X size={18} aria-hidden="true" />
+                                <span>Reject Plan</span>
+                              </button>
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+
+                      {/* End-of-response Separator */}
+                      <motion.div
+                        initial={{ scaleX: 0 }}
+                        animate={{ scaleX: 1 }}
+                        transition={{ delay: 0.5, duration: 0.8 }}
+                        style={{
+                          height: "1px",
+                          background: "rgba(255, 122, 26, 0.5)",
+                          width: "100%",
+
+                          marginTop: "32px",
+                          transformOrigin: "left",
+                        }}
+                      />
                     </div>
                   </div>
-                </div>
-              )}
-            </motion.div>
-          ))}
-        </AnimatePresence>
+                ) : (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      width: "100%",
+                      padding: "0 10px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "16px",
+                        maxWidth: "80%",
+                        flexDirection: "row-reverse",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "36px",
+                          height: "36px",
+                          borderRadius: "10px",
+                          background: "rgba(255, 255, 255, 0.1)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <User size={20} color="white" aria-hidden="true" />
+                      </div>
+                      <div
+                        className="glass"
+                        style={{
+                          padding: "16px 20px",
+                          borderRadius: "20px",
+                          borderTopRightRadius: "4px",
+                          background: "rgba(255, 122, 26, 0.1)",
+                          border: "1px solid rgba(255, 122, 26, 0.3)",
+                        }}
+                      >
+                        <p
+                          style={{
+                            color: "#ffffff",
+                            fontSize: "1rem",
+                            lineHeight: 1.6,
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "break-word",
+                            minWidth: 0,
+                          }}
+                        >
+                          {msg.content}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        )}
         <div ref={messagesEndRef} />
       </div>
 

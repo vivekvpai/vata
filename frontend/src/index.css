@@ -61,6 +61,14 @@ h1, h2, h3, h4, .heading-font {
   background: rgba(0, 0, 0, 0.3);
   border-radius: 10px;
 }
+.category-item-container:hover .category-actions {
+  opacity: 1 !important;
+}
+
+.category-actions button:hover {
+  transform: scale(1.15);
+  color: white !important;
+}
 
 ::-webkit-scrollbar-thumb {
   background: var(--accent);

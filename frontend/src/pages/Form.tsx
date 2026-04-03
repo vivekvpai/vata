@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { Plus, X, FileText, Layout, Hash, Send, Sparkles, Loader2, Bookmark, PlusCircle, RefreshCw, AlertCircle } from 'lucide-react';
+import { Plus, X, FileText, Layout, Hash, Send, Sparkles, Loader2, Bookmark, PlusCircle, RefreshCw, AlertCircle, Pencil, Trash2, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useToast } from '../contexts/ToastContext';
+import ConfirmModal from '../components/ConfirmModal';
 
 const INITIAL_CATEGORIES = [
   "Architecture", "Frontend", "Backend", "UI/UX", "Database", 
@@ -12,6 +14,8 @@ const Form = () => {
   const [categories, setCategories] = useState(INITIAL_CATEGORIES);
   const [newCategory, setNewCategory] = useState('');
   const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
   
   const [formData, setFormData] = useState({
     user_note: '',
@@ -22,6 +26,12 @@ const Form = () => {
   const [currentTag, setCurrentTag] = useState('');
   const [submittedJson, setSubmittedJson] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
+  
+  // Deletion State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null);
+
+  const { showToast } = useToast();
 
   const addTag = () => {
     if (currentTag.trim() && tags.length < 10 && !tags.includes(currentTag.trim())) {
@@ -40,6 +50,38 @@ const Form = () => {
       setFormData(prev => ({ ...prev, primary_category: newCategory.trim() }));
       setNewCategory('');
       setIsAddingCategory(false);
+      showToast('success', 'Category Created', `"${newCategory.trim()}" has been added.`);
+    }
+  };
+
+  const handleEditCategory = (oldName: string) => {
+    if (editValue.trim() && !categories.includes(editValue.trim())) {
+      setCategories(categories.map(c => c === oldName ? editValue.trim() : c));
+      if (formData.primary_category === oldName) {
+        setFormData(prev => ({ ...prev, primary_category: editValue.trim() }));
+      }
+      setEditingCategory(null);
+      setEditValue('');
+      showToast('success', 'Category Updated', `Renamed "${oldName}" to "${editValue.trim()}".`);
+    } else if (editValue.trim() === oldName) {
+      setEditingCategory(null);
+    }
+  };
+
+  const handleDeleteCategory = (name: string) => {
+    setCategoryToDelete(name);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (categoryToDelete) {
+      setCategories(categories.filter(c => c !== categoryToDelete));
+      if (formData.primary_category === categoryToDelete) {
+        setFormData(prev => ({ ...prev, primary_category: '' }));
+      }
+      showToast('alert', 'Category Deleted', `"${categoryToDelete}" has been removed.`);
+      setCategoryToDelete(null);
+      setIsDeleteModalOpen(false);
     }
   };
 
@@ -47,6 +89,7 @@ const Form = () => {
     setFormData({ user_note: '', ai_summary: '', primary_category: '' });
     setTags([]);
     setSubmittedJson(null);
+    showToast('info', 'Form Cleared', 'All fields have been reset.');
   };
 
   const handleAiAutoFill = async () => {
@@ -68,6 +111,7 @@ const Form = () => {
     if (!isFormValid) return;
     const finalData = { ...formData, tags };
     setSubmittedJson(JSON.stringify(finalData, null, 2));
+    showToast('success', 'Asset Saved', 'Your digital asset has been successfully recorded.');
     console.log('Submitted Data:', finalData);
   };
 
@@ -124,30 +168,76 @@ const Form = () => {
           )}
 
           {categories.map((cat) => (
-            <motion.button
+            <motion.div
               key={cat}
-              whileHover={{ x: 3, background: 'rgba(255, 122, 26, 0.05)' }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setFormData(prev => ({ ...prev, primary_category: cat }))}
-              style={{
-                textAlign: 'left',
-                padding: '12px 14px',
-                borderRadius: '12px',
-                border: '1px solid',
-                borderColor: formData.primary_category === cat ? 'var(--accent)' : 'rgba(255, 255, 255, 0.05)',
-                background: formData.primary_category === cat ? 'rgba(255, 122, 26, 0.1)' : 'rgba(10, 10, 10, 0.4)',
-                color: formData.primary_category === cat ? 'white' : '#9ca3af',
-                fontWeight: formData.primary_category === cat ? 700 : 500,
-                fontSize: '0.8rem',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
+              style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                {cat}
-                {formData.primary_category === cat && <Bookmark size={12} fill="var(--accent)" stroke="var(--accent)" aria-hidden="true" />}
-              </div>
-            </motion.button>
+              {editingCategory === cat ? (
+                <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
+                  <input 
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleEditCategory(cat)}
+                    style={{ 
+                      flex: 1, padding: '10px', background: 'rgba(255,255,255,0.05)', 
+                      border: '1px solid var(--accent)', borderRadius: '8px', 
+                      color: 'white', fontSize: '0.85rem', outline: 'none' 
+                    }}
+                  />
+                  <button onClick={() => handleEditCategory(cat)} style={{ padding: '8px', background: 'var(--accent)', border: 'none', borderRadius: '8px', color: 'white', cursor: 'pointer' }}><Check size={14} /></button>
+                </div>
+              ) : (
+                <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center' }} className="category-item-container">
+                  <motion.button
+                    whileHover={{ x: 3, background: 'rgba(255, 122, 26, 0.05)' }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setFormData(prev => ({ ...prev, primary_category: cat }))}
+                    style={{
+                      textAlign: 'left',
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: '12px',
+                      border: '1px solid',
+                      borderColor: formData.primary_category === cat ? 'var(--accent)' : 'rgba(255, 255, 255, 0.05)',
+                      background: formData.primary_category === cat ? 'rgba(255, 122, 26, 0.1)' : 'rgba(10, 10, 10, 0.4)',
+                      color: formData.primary_category === cat ? 'white' : '#9ca3af',
+                      fontWeight: formData.primary_category === cat ? 700 : 500,
+                      fontSize: '0.8rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      paddingRight: '60px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {formData.primary_category === cat && (
+                        <motion.div 
+                          initial={{ scale: 0 }} 
+                          animate={{ scale: 1 }} 
+                          style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 10px var(--accent)' }} 
+                        />
+                      )}
+                      <span>{cat}</span>
+                    </div>
+                  </motion.button>
+                  
+                  <div className="category-actions" style={{ position: 'absolute', right: '8px', display: 'flex', gap: '4px', opacity: 0.2, transition: 'opacity 0.2s ease' }}>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); setEditValue(cat); }}
+                      style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '4px' }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat); }}
+                      style={{ background: 'transparent', border: 'none', color: '#ff4d4d', cursor: 'pointer', padding: '4px' }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
           ))}
         </div>
       </div>
@@ -332,6 +422,18 @@ const Form = () => {
           )}
         </AnimatePresence>
       </div>
+
+      <ConfirmModal 
+        isOpen={isDeleteModalOpen}
+        title="Delete Category?"
+        message={`Are you sure you want to delete "${categoryToDelete}"? This action cannot be undone.`}
+        confirmText="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          setIsDeleteModalOpen(false);
+          setCategoryToDelete(null);
+        }}
+      />
     </div>
   );
 };
