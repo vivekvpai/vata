@@ -66,6 +66,10 @@ npm run dev
 
 The frontend will be available at [http://localhost:5173](http://localhost:5173). It is pre-configured to proxy API requests to the backend on port 8000.
 
+## API Testing Guide
+
+For a step-by-step backend run and API testing guide, see [README_API_TESTING.md](README_API_TESTING.md).
+
 ## Tech Stack
 
 - **Backend**: Python 3.12, FastAPI, Uvicorn, Typer.
