@@ -12,7 +12,7 @@ app = FastAPI(title="Vata API")
 api_router = APIRouter(prefix="/api")
 
 DATA_DIR = Path(__file__).parent / "data"
-CATEGORY_REGISTRY_FILE = DATA_DIR / "catogary.json"
+CATEGORY_REGISTRY_FILE = DATA_DIR / "category.json"
 
 
 class CategoryCreateRequest(BaseModel):
