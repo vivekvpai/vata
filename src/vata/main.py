@@ -138,7 +138,6 @@ async def update_category(category: str, request: CategoryUpdateRequest):
         "content": payload,
     }
 
-
 @api_router.delete("/categories/{category}")
 async def delete_category(category: str):
     registry = load_category_registry()
@@ -155,6 +154,82 @@ async def delete_category(category: str):
     save_category_registry(registry)
 
     return {"message": "Category deleted", "category": category}
+
+
+@api_router.delete("/categories/{category}/files/{filename}")
+async def delete_category_file(category: str, filename: str):
+    registry = load_category_registry()
+    filenames = registry.get(category)
+    if not filenames or filename not in filenames:
+        raise HTTPException(status_code=404, detail="File not found in category")
+    
+    file_path = DATA_DIR / filename
+    if file_path.exists():
+        file_path.unlink()
+    
+    filenames.remove(filename)
+    # If no files left, remove category? 
+    # Let's keep the category name in the registry but with empty list? 
+    # Or remove it if it's empty. Registry initialization keeps defaults.
+    # Since user removed defaults, maybe remove it.
+    if not filenames:
+        registry.pop(category, None)
+    else:
+        registry[category] = filenames
+    
+    save_category_registry(registry)
+    return {"message": "File deleted", "category": category, "filename": filename}
+
+
+class CategoryRenameRequest(BaseModel):
+    new_name: str = Field(..., min_length=1)
+
+
+@api_router.patch("/categories/{category}/rename")
+async def rename_category(category: str, request: CategoryRenameRequest):
+    registry = load_category_registry()
+    if category not in registry:
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    new_name = request.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="New name cannot be empty")
+    
+    if new_name in registry and new_name != category:
+        raise HTTPException(status_code=400, detail="New category name already exists")
+
+    filenames = registry.pop(category)
+    registry[new_name] = []
+    
+    # Optional: Rename physical files to maintain consistency
+    new_filenames = []
+    for old_filename in filenames:
+        old_path = DATA_DIR / old_filename
+        if old_path.exists():
+            # Create new filename by replacing category prefix if it exists
+            # Filenames are CategoryName_Timestamp.json
+            if old_filename.startswith(f"{category}_"):
+                new_filename = old_filename.replace(f"{category}_", f"{new_name}_", 1)
+            else:
+                new_filename = f"{new_name}_{old_filename}" # fallback
+            
+            new_path = DATA_DIR / new_filename
+            old_path.rename(new_path)
+            new_filenames.append(new_filename)
+        else:
+            # If file doesn't exist, just keep reference? 
+            # Or skip it. Let's skip it to avoid broken registry.
+            pass
+            
+    registry[new_name] = new_filenames
+    save_category_registry(registry)
+
+    return {
+        "message": "Category renamed",
+        "old_name": category,
+        "new_name": new_name,
+        "files_renamed": len(new_filenames)
+    }
 
 app.include_router(api_router)
 

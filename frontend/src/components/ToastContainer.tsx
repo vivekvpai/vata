@@ -8,6 +8,7 @@ const getIcon = (type: ToastType) => {
     case 'success': return <CheckCircle size={18} />;
     case 'warning': return <AlertTriangle size={18} />;
     case 'alert': return <AlertCircle size={18} />;
+    case 'error': return <X size={18} />;
     default: return <Info size={18} />;
   }
 };
@@ -17,6 +18,7 @@ const getColor = (type: ToastType) => {
     case 'success': return '#22c55e';
     case 'warning': return '#eab308';
     case 'alert': return '#ef4444';
+    case 'error': return '#ef4444'; // Red for error
     default: return 'var(--accent)';
   }
 };

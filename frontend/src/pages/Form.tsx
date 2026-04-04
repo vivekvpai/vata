@@ -1,17 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, X, FileText, Layout, Hash, Send, Sparkles, Loader2, Bookmark, PlusCircle, RefreshCw, AlertCircle, Pencil, Trash2, Check, ArrowRight, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '../contexts/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
 
-const INITIAL_CATEGORIES = [
-  "Architecture", "Frontend", "Backend", "UI/UX", "Database", 
-  "Security", "Mobile", "AI/ML", "DevOps", "Testing", 
-  "Analytics", "Project Mgmt", "Strategy", "Other"
-];
 
 const Form = () => {
-  const [categories, setCategories] = useState(INITIAL_CATEGORIES);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [isCategoryLoading, setIsCategoryLoading] = useState(false);
   const [newCategory, setNewCategory] = useState('');
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -37,12 +33,108 @@ const Form = () => {
     tags: null,
     category: null
   });
+  
+  const [history, setHistory] = useState<string[]>([]);
+  const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
 
   // Deletion State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null);
 
   const { showToast } = useToast();
+
+  const fetchCategories = async () => {
+    setIsCategoryLoading(true);
+    try {
+      const response = await fetch('/api/categories');
+      if (response.ok) {
+        const data = await response.json();
+        // Backend returns dict { category_name: [files] }
+        setCategories(Object.keys(data));
+      } else {
+        showToast('error', 'Fetch Failed', 'Could not load categories from server.');
+      }
+    } catch (error) {
+      showToast('error', 'Fetch Error', 'Network error while fetching categories.');
+    } finally {
+      setIsCategoryLoading(false);
+    }
+  };
+
+  const fetchHistory = async (category: string) => {
+    try {
+      const response = await fetch(`/api/categories/${category}`);
+      if (response.ok) {
+        const data = await response.json();
+        setHistory(data.files || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch history:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+  }, [showToast]);
+
+  useEffect(() => {
+    if (formData.category) {
+      fetchHistory(formData.category);
+    } else {
+      setHistory([]);
+    }
+  }, [formData.category]);
+
+  const loadAsset = async (filename: string) => {
+    try {
+      const response = await fetch(`/api/categories/${formData.category}`);
+      if (response.ok) {
+        const data = await response.json();
+        // Since get_category returns the latest content, we might need a more specific getter
+        // But for now, let's assume get_category content is what we want if it's the latest
+        // Or fetch specific file content if we had an endpoint for that.
+        // Actually, main.py get_category returns the *resolved* (latest) file.
+        // Let's assume we load the version context.
+        const content = data.content;
+        if (content && content.data) {
+          setFormData({
+            main_content: content.data.main_content || '',
+            summary: content.data.summary || '',
+            category: content.category || formData.category,
+          });
+          setTags(content.data.tags || []);
+          setSelectedAsset(filename);
+          showToast('info', 'Asset Loaded', `Loaded version: ${filename.split('_')[1].split('.')[0]}`);
+        }
+      }
+    } catch (error) {
+      showToast('error', 'Load Failed', 'Could not fetch asset content.');
+    }
+  };
+
+  const deleteAsset = async (filename: string) => {
+    if (!window.confirm(`Are you sure you want to delete this specific version?`)) return;
+    
+    setIsCategoryLoading(true);
+    try {
+      const response = await fetch(`/api/categories/${formData.category}/files/${filename}`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        showToast('alert', 'Version Deleted', 'Specific asset version has been removed.');
+        fetchHistory(formData.category);
+        if (selectedAsset === filename) {
+          setSelectedAsset(null);
+        }
+      } else {
+        showToast('error', 'Deletion Failed', 'Server rejected asset deletion.');
+      }
+    } catch (error) {
+      showToast('error', 'Network Error', 'Could not delete asset.');
+    } finally {
+      setIsCategoryLoading(false);
+    }
+  };
 
   const addTag = () => {
     if (currentTag.trim() && tags.length < 10 && !tags.includes(currentTag.trim())) {
@@ -55,27 +147,65 @@ const Form = () => {
     setTags(tags.filter(tag => tag !== tagToRemove));
   };
 
-  const handleCreateCategory = () => {
+  const handleCreateCategory = async () => {
     if (newCategory.trim() && !categories.includes(newCategory.trim())) {
-      setCategories([...categories, newCategory.trim()]);
-      setFormData(prev => ({ ...prev, category: newCategory.trim() }));
-      setNewCategory('');
-      setIsAddingCategory(false);
-      showToast('success', 'Category Created', `"${newCategory.trim()}" has been added.`);
+      setIsCategoryLoading(true);
+      try {
+        const response = await fetch('/api/categories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category: newCategory.trim() })
+        });
+        
+        if (response.ok) {
+          setCategories([...categories, newCategory.trim()]);
+          setFormData(prev => ({ ...prev, category: newCategory.trim() }));
+          setNewCategory('');
+          setIsAddingCategory(false);
+          showToast('success', 'Category Created', `"${newCategory.trim()}" has been added.`);
+        } else {
+          showToast('error', 'Creation Failed', 'Server rejected category creation.');
+        }
+      } catch (error) {
+        showToast('error', 'Network Error', 'Could not connect to the server.');
+      } finally {
+        setIsCategoryLoading(false);
+      }
     }
   };
 
-  const handleEditCategory = (oldName: string) => {
-    if (editValue.trim() && !categories.includes(editValue.trim())) {
-      setCategories(categories.map(c => c === oldName ? editValue.trim() : c));
-      if (formData.category === oldName) {
-        setFormData(prev => ({ ...prev, category: editValue.trim() }));
+  const handleEditCategory = async (oldName: string) => {
+    if (editValue.trim() && (editValue.trim() === oldName || !categories.includes(editValue.trim()))) {
+      if (editValue.trim() === oldName) {
+        setEditingCategory(null);
+        return;
       }
-      setEditingCategory(null);
-      setEditValue('');
-      showToast('success', 'Category Updated', `Renamed "${oldName}" to "${editValue.trim()}".`);
-    } else if (editValue.trim() === oldName) {
-      setEditingCategory(null);
+
+      setIsCategoryLoading(true);
+      try {
+        const response = await fetch(`/api/categories/${oldName}/rename`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_name: editValue.trim() })
+        });
+
+        if (response.ok) {
+          setCategories(categories.map(c => c === oldName ? editValue.trim() : c));
+          if (formData.category === oldName) {
+            setFormData(prev => ({ ...prev, category: editValue.trim() }));
+          }
+          setEditingCategory(null);
+          setEditValue('');
+          showToast('success', 'Category Updated', `Renamed "${oldName}" to "${editValue.trim()}".`);
+        } else {
+          const err = await response.json();
+          showToast('error', 'Update Failed', err.detail || 'Could not rename category.');
+        }
+      } catch (error) {
+        showToast('error', 'Network Error', 'Could not connect to the server.');
+      } finally {
+        setIsCategoryLoading(false);
+      }
     }
   };
 
@@ -84,15 +214,30 @@ const Form = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (categoryToDelete) {
-      setCategories(categories.filter(c => c !== categoryToDelete));
-      if (formData.category === categoryToDelete) {
-        setFormData(prev => ({ ...prev, category: '' }));
+      setIsCategoryLoading(true);
+      try {
+        const response = await fetch(`/api/categories/${categoryToDelete}`, {
+          method: 'DELETE'
+        });
+
+        if (response.ok) {
+          setCategories(categories.filter(c => c !== categoryToDelete));
+          if (formData.category === categoryToDelete) {
+            setFormData(prev => ({ ...prev, category: '' }));
+          }
+          showToast('alert', 'Category Deleted', `"${categoryToDelete}" has been removed.`);
+          setCategoryToDelete(null);
+          setIsDeleteModalOpen(false);
+        } else {
+          showToast('error', 'Deletion Failed', 'Server rejected category deletion.');
+        }
+      } catch (error) {
+        showToast('error', 'Network Error', 'Could not connect to the server.');
+      } finally {
+        setIsCategoryLoading(false);
       }
-      showToast('alert', 'Category Deleted', `"${categoryToDelete}" has been removed.`);
-      setCategoryToDelete(null);
-      setIsDeleteModalOpen(false);
     }
   };
 
@@ -126,12 +271,41 @@ const Form = () => {
 
   const isFormValid = formData.main_content.length >= 10 && formData.category !== '' && tags.length > 0;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isFormValid) return;
-    const finalData = { ...formData, tags };
-    setSubmittedJson(JSON.stringify(finalData, null, 2));
-    showToast('success', 'Asset Saved', 'Your digital asset has been successfully recorded.');
+
+    setIsCategoryLoading(true);
+    try {
+      // If selectedAsset is already set, we might want to update (PUT)
+      // but for simplicity, let's always create a new version (POST)
+      // as it's more "Vata" like (versioned)
+      const response = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: formData.category,
+          data: {
+            main_content: formData.main_content,
+            summary: formData.summary,
+            tags: tags
+          }
+        })
+      });
+
+      if (response.ok) {
+        const finalData = { ...formData, tags };
+        setSubmittedJson(JSON.stringify(finalData, null, 2));
+        showToast('success', 'Asset Saved', 'Your digital asset has been successfully recorded.');
+        fetchHistory(formData.category);
+      } else {
+        showToast('error', 'Save Failed', 'Server rejected asset submission.');
+      }
+    } catch (error) {
+      showToast('error', 'Network Error', 'Could not save asset to server.');
+    } finally {
+      setIsCategoryLoading(false);
+    }
   };
 
   const acceptSuggestion = (type: 'summary' | 'tags' | 'category') => {
@@ -181,9 +355,15 @@ const Form = () => {
             border: '1px solid rgba(255, 122, 26, 0.1)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '10px'
+            gap: '10px',
+            position: 'relative'
           }}
         >
+          {isCategoryLoading && (
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.2)', backdropFilter: 'blur(1px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, borderRadius: '16px' }}>
+              <Loader2 className="animate-spin text-accent" size={24} />
+            </div>
+          )}
           {isAddingCategory && (
             <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} style={{ marginBottom: '4px' }}>
               <input 
@@ -361,6 +541,42 @@ const Form = () => {
             )}
           </div>
         </div>
+
+        {/* Category History - Mini Row */}
+        <AnimatePresence>
+          {formData.category && history.length > 0 && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }} 
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              style={{ paddingBottom: '16px', overflow: 'hidden' }}
+            >
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px' }} className="scrollbar-hide">
+                {history.map((fname, idx) => (
+                  <motion.div 
+                    key={fname}
+                    whileHover={{ scale: 1.05 }}
+                    style={{ 
+                      flexShrink: 0, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', 
+                      border: selectedAsset === fname ? '1px solid var(--accent)' : '1px solid var(--glass-border)',
+                      borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
+                      fontSize: '0.7rem', color: selectedAsset === fname ? 'white' : '#9ca3af'
+                    }}
+                    onClick={() => loadAsset(fname)}
+                  >
+                    <Bookmark size={12} /> Version v{history.length - idx}
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); deleteAsset(fname); }}
+                      style={{ background: 'transparent', border: 'none', color: '#ff4d4d', cursor: 'pointer', display: 'flex', marginLeft: '4px' }}
+                    >
+                      <X size={10} />
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
           {/* Main Content */}

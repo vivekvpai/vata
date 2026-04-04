@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 
-export type ToastType = 'success' | 'alert' | 'warning' | 'info';
+export type ToastType = 'success' | 'alert' | 'warning' | 'info' | 'error';
 
 export interface Toast {
   id: string;
