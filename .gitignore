@@ -30,6 +30,8 @@ htmlcov/
 .mypy_cache/
 .tox/
 .nox/
+.python-version
+data
 
 # --- Node.js ---
 node_modules/
