@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, X, FileText, Layout, Hash, Send, Sparkles, Loader2, Bookmark, PlusCircle, RefreshCw, AlertCircle, Pencil, Trash2, Check } from 'lucide-react';
+import { Plus, X, FileText, Layout, Hash, Send, Sparkles, Loader2, Bookmark, PlusCircle, RefreshCw, AlertCircle, Pencil, Trash2, Check, ArrowRight, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '../contexts/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
@@ -18,15 +18,26 @@ const Form = () => {
   const [editValue, setEditValue] = useState('');
   
   const [formData, setFormData] = useState({
-    user_note: '',
-    ai_summary: '',
-    primary_category: '',
+    main_content: '',
+    summary: '',
+    category: '',
   });
   const [tags, setTags] = useState<string[]>([]);
   const [currentTag, setCurrentTag] = useState('');
   const [submittedJson, setSubmittedJson] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   
+  // Suggestion State
+  const [suggestions, setSuggestions] = useState<{
+    summary: string | null;
+    tags: string[] | null;
+    category: string | null;
+  }>({
+    summary: null,
+    tags: null,
+    category: null
+  });
+
   // Deletion State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null);
@@ -47,7 +58,7 @@ const Form = () => {
   const handleCreateCategory = () => {
     if (newCategory.trim() && !categories.includes(newCategory.trim())) {
       setCategories([...categories, newCategory.trim()]);
-      setFormData(prev => ({ ...prev, primary_category: newCategory.trim() }));
+      setFormData(prev => ({ ...prev, category: newCategory.trim() }));
       setNewCategory('');
       setIsAddingCategory(false);
       showToast('success', 'Category Created', `"${newCategory.trim()}" has been added.`);
@@ -57,8 +68,8 @@ const Form = () => {
   const handleEditCategory = (oldName: string) => {
     if (editValue.trim() && !categories.includes(editValue.trim())) {
       setCategories(categories.map(c => c === oldName ? editValue.trim() : c));
-      if (formData.primary_category === oldName) {
-        setFormData(prev => ({ ...prev, primary_category: editValue.trim() }));
+      if (formData.category === oldName) {
+        setFormData(prev => ({ ...prev, category: editValue.trim() }));
       }
       setEditingCategory(null);
       setEditValue('');
@@ -76,8 +87,8 @@ const Form = () => {
   const confirmDelete = () => {
     if (categoryToDelete) {
       setCategories(categories.filter(c => c !== categoryToDelete));
-      if (formData.primary_category === categoryToDelete) {
-        setFormData(prev => ({ ...prev, primary_category: '' }));
+      if (formData.category === categoryToDelete) {
+        setFormData(prev => ({ ...prev, category: '' }));
       }
       showToast('alert', 'Category Deleted', `"${categoryToDelete}" has been removed.`);
       setCategoryToDelete(null);
@@ -86,25 +97,34 @@ const Form = () => {
   };
 
   const clearForm = () => {
-    setFormData({ user_note: '', ai_summary: '', primary_category: '' });
+    setFormData({ main_content: '', summary: '', category: '' });
     setTags([]);
+    setSuggestions({ summary: null, tags: null, category: null });
     setSubmittedJson(null);
     showToast('info', 'Form Cleared', 'All fields have been reset.');
   };
 
-  const handleAiAutoFill = async () => {
+  const handleSuggestAi = async () => {
+    if (formData.main_content.length < 10) {
+      showToast('alert', 'Incomplete Content', 'Provide more main content for AI to analyze.');
+      return;
+    }
+
     setIsAiLoading(true);
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    setFormData({
-      user_note: "Integrate PyGraphistry for large-scale social network analysis.",
-      ai_summary: "Graphistry is a cloud-native GPU platform for visual graph intelligence. By offloading rendering to the GPU, it enables interactively exploring millions of nodes and edges. This leaf explores the Python API (PyGraphistry) for uploading data frames and performing server-side analytics.",
-      primary_category: "Analytics"
+    // Simulate AI Processing
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    setSuggestions({
+      summary: "This implementation leverages GPU-accelerated rendering via Graphistry for real-time visualization of multi-million node datasets, optimizing network analysis performance and interactive exploration.",
+      category: "Analytics",
+      tags: ["Graphistry", "GPU", "Performance", "Big Data", "Visual intelligence"]
     });
-    setTags(["Graphistry", "GPU Rendering", "Social Network", "Graph Intelligence", "Big Data"]);
+    
     setIsAiLoading(false);
+    showToast('info', 'AI Suggestions Ready', 'Review the suggested improvements below each field.');
   };
 
-  const isFormValid = formData.user_note.length >= 10 && formData.primary_category !== '' && tags.length > 0;
+  const isFormValid = formData.main_content.length >= 10 && formData.category !== '' && tags.length > 0;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,7 +132,25 @@ const Form = () => {
     const finalData = { ...formData, tags };
     setSubmittedJson(JSON.stringify(finalData, null, 2));
     showToast('success', 'Asset Saved', 'Your digital asset has been successfully recorded.');
-    console.log('Submitted Data:', finalData);
+  };
+
+  const acceptSuggestion = (type: 'summary' | 'tags' | 'category') => {
+    if (type === 'summary' && suggestions.summary) {
+      setFormData(prev => ({ ...prev, summary: suggestions.summary! }));
+      setSuggestions(prev => ({ ...prev, summary: null }));
+    } else if (type === 'tags' && suggestions.tags) {
+      setTags(suggestions.tags);
+      setSuggestions(prev => ({ ...prev, tags: null }));
+    } else if (type === 'category' && suggestions.category) {
+      setFormData(prev => ({ ...prev, category: suggestions.category! }));
+      setSuggestions(prev => ({ ...prev, category: null }));
+    }
+    showToast('success', 'Suggestion Accepted', `Applied improvement to ${type}.`);
+  };
+
+  const rejectSuggestion = (type: 'summary' | 'tags' | 'category') => {
+    setSuggestions(prev => ({ ...prev, [type]: null }));
+    showToast('info', 'Suggestion Rejected', `Removed improvement for ${type}.`);
   };
 
   return (
@@ -167,6 +205,30 @@ const Form = () => {
             </motion.div>
           )}
 
+          {suggestions.category && (
+             <motion.div 
+               initial={{ opacity: 0, scale: 0.95 }} 
+               animate={{ opacity: 1, scale: 1 }}
+               style={{ 
+                 background: 'rgba(74, 222, 128, 0.05)', 
+                 border: '1px dashed #4ade80', 
+                 borderRadius: '12px', 
+                 padding: '10px', 
+                 marginBottom: '10px',
+                 fontSize: '0.75rem'
+               }}
+             >
+               <div style={{ color: '#4ade80', fontWeight: 700, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                 <Sparkles size={12} /> SUGGESTED CATEGORY
+               </div>
+               <div style={{ color: 'white', marginBottom: '8px', fontWeight: 600 }}>{suggestions.category}</div>
+               <div style={{ display: 'flex', gap: '4px' }}>
+                 <button onClick={() => acceptSuggestion('category')} style={{ flex: 1, padding: '4px', background: '#4ade80', border: 'none', borderRadius: '4px', color: '#050505', fontWeight: 700, cursor: 'pointer', fontSize: '0.65rem' }}>ACCEPT</button>
+                 <button onClick={() => rejectSuggestion('category')} style={{ flex: 0.5, padding: '4px', background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.65rem' }}>X</button>
+               </div>
+             </motion.div>
+          )}
+
           {categories.map((cat) => (
             <motion.div
               key={cat}
@@ -192,17 +254,17 @@ const Form = () => {
                   <motion.button
                     whileHover={{ x: 3, background: 'rgba(255, 122, 26, 0.05)' }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => setFormData(prev => ({ ...prev, primary_category: cat }))}
+                    onClick={() => setFormData(prev => ({ ...prev, category: cat }))}
                     style={{
                       textAlign: 'left',
                       width: '100%',
                       padding: '12px 14px',
                       borderRadius: '12px',
                       border: '1px solid',
-                      borderColor: formData.primary_category === cat ? 'var(--accent)' : 'rgba(255, 255, 255, 0.05)',
-                      background: formData.primary_category === cat ? 'rgba(255, 122, 26, 0.1)' : 'rgba(10, 10, 10, 0.4)',
-                      color: formData.primary_category === cat ? 'white' : '#9ca3af',
-                      fontWeight: formData.primary_category === cat ? 700 : 500,
+                      borderColor: formData.category === cat ? 'var(--accent)' : 'rgba(255, 255, 255, 0.05)',
+                      background: formData.category === cat ? 'rgba(255, 122, 26, 0.1)' : 'rgba(10, 10, 10, 0.4)',
+                      color: formData.category === cat ? 'white' : '#9ca3af',
+                      fontWeight: formData.category === cat ? 700 : 500,
                       fontSize: '0.8rem',
                       cursor: 'pointer',
                       transition: 'all 0.2s ease',
@@ -210,7 +272,7 @@ const Form = () => {
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {formData.primary_category === cat && (
+                      {formData.category === cat && (
                         <motion.div 
                           initial={{ scale: 0 }} 
                           animate={{ scale: 1 }} 
@@ -264,7 +326,7 @@ const Form = () => {
             </button>
             <button 
               type="button"
-              onClick={handleAiAutoFill}
+              onClick={handleSuggestAi}
               disabled={isAiLoading}
               className="accent-glow"
               style={{
@@ -273,37 +335,59 @@ const Form = () => {
               }}
             >
               {isAiLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} aria-hidden="true" />}
-              {isAiLoading ? 'GENERATING…' : 'AI AUTO-FILL'}
+              {isAiLoading ? 'ANALYZING…' : 'SUGGEST AI'}
             </button>
+
+            {/* Accept All Button */}
+            {(suggestions.summary || suggestions.tags || suggestions.category) && (
+              <motion.button 
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                onClick={() => {
+                  if (suggestions.summary) acceptSuggestion('summary');
+                  if (suggestions.tags) acceptSuggestion('tags');
+                  if (suggestions.category) acceptSuggestion('category');
+                  showToast('success', 'All Suggestions Applied', 'Successfully integrated all AI improvements.');
+                }}
+                className="accent-glow"
+                style={{
+                  padding: '8px 16px', background: '#22c55e', border: 'none', borderRadius: '8px',
+                  color: '#050505', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem',
+                  boxShadow: '0 0 15px rgba(34, 197, 94, 0.3)'
+                }}
+              >
+                <Check size={14} /> ACCEPT ALL
+              </motion.button>
+            )}
           </div>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
-          {/* User Note */}
+          {/* Main Content */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label htmlFor="user_note" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <FileText size={14} aria-hidden="true" /> ASSET DESCRIPTION
+              <label htmlFor="main_content" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <FileText size={14} aria-hidden="true" /> MAIN CONTENT
               </label>
               <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#4b5563' }}>
                 <span style={{ 
-                  color: formData.user_note.length === 0 ? '#ff4d4d' : formData.user_note.length === 500 ? '#ff7a1a' : '#4ade80',
+                  color: formData.main_content.length === 0 ? '#ff4d4d' : formData.main_content.length === 500 ? '#ff7a1a' : '#4ade80',
                   transition: 'color 0.3s ease'
                 }}>
-                  {formData.user_note.length}
+                  {formData.main_content.length}
                 </span> / 500
               </span>
             </div>
             <textarea 
-              id="user_note"
-              placeholder="Core asset content (min 10 characters)…" 
+              id="main_content"
+              placeholder="Enter the primary asset text here…" 
               rows={2}
               maxLength={500}
-              value={formData.user_note}
-              onChange={(e) => setFormData({...formData, user_note: e.target.value})}
-              style={{ padding: '12px', background: 'rgba(255, 255, 255, 0.03)', border: formData.user_note.length > 0 && formData.user_note.length < 10 ? '1px solid var(--accent)' : '1px solid var(--glass-border)', borderRadius: '12px', color: 'white', fontSize: '0.95rem', outline: 'none', resize: 'none' }}
+              value={formData.main_content}
+              onChange={(e) => setFormData({...formData, main_content: e.target.value})}
+              style={{ padding: '12px', background: 'rgba(255, 255, 255, 0.03)', border: formData.main_content.length > 0 && formData.main_content.length < 10 ? '1px solid var(--accent)' : '1px solid var(--glass-border)', borderRadius: '12px', color: 'white', fontSize: '0.95rem', outline: 'none', resize: 'none' }}
             />
-            {formData.user_note.length > 0 && formData.user_note.length < 10 && (
+            {formData.main_content.length > 0 && formData.main_content.length < 10 && (
               <span style={{ fontSize: '0.65rem', color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <AlertCircle size={10} /> Minimum 10 characters required.
               </span>
@@ -313,34 +397,57 @@ const Form = () => {
           {/* AI Summary */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label htmlFor="ai_summary" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Layout size={14} aria-hidden="true" /> AI SUMMARY & CONTEXT
+              <label htmlFor="summary" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Layout size={14} aria-hidden="true" /> SUMMARY & CONTEXT
               </label>
               <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#4b5563' }}>
                 <span style={{ 
-                  color: formData.ai_summary.length === 0 ? '#ff4d4d' : formData.ai_summary.length === 600 ? '#ff7a1a' : '#4ade80',
+                  color: formData.summary.length === 0 ? '#ff4d4d' : formData.summary.length === 600 ? '#ff7a1a' : '#4ade80',
                   transition: 'color 0.3s ease'
                 }}>
-                  {formData.ai_summary.length}
+                  {formData.summary.length}
                 </span> / 600
               </span>
             </div>
             <textarea 
-              id="ai_summary"
-              placeholder="Full summary details…" 
+              id="summary"
+              placeholder="Provide a summary context for the asset…" 
               rows={4}
               maxLength={600}
-              value={formData.ai_summary}
-              onChange={(e) => setFormData({...formData, ai_summary: e.target.value})}
+              value={formData.summary}
+              onChange={(e) => setFormData({...formData, summary: e.target.value})}
               style={{ padding: '12px', background: 'rgba(255, 255, 255, 0.03)', border: '1px solid var(--glass-border)', borderRadius: '12px', color: 'white', fontSize: '0.95rem', outline: 'none', resize: 'none' }}
             />
+            
+            <AnimatePresence>
+              {suggestions.summary && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  exit={{ opacity: 0, y: -10 }}
+                  style={{ 
+                    marginTop: '8px', padding: '14px', background: 'rgba(74, 222, 128, 0.05)', 
+                    border: '1px dashed #4ade80', borderRadius: '12px' 
+                  }}
+                >
+                  <div style={{ color: '#4ade80', fontSize: '0.75rem', fontWeight: 800, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sparkles size={14} /> AI RECOMMENDED SUMMARY
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: 'white', lineHeight: 1.6, marginBottom: '12px' }}>{suggestions.summary}</p>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button type="button" onClick={() => acceptSuggestion('summary')} style={{ padding: '6px 16px', background: '#4ade80', border: 'none', borderRadius: '6px', color: '#050505', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><ThumbsUp size={12}/> Accept</button>
+                    <button type="button" onClick={() => rejectSuggestion('summary')} style={{ padding: '6px 16px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'white', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><ThumbsDown size={12}/> Reject</button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Tags */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label htmlFor="tagInput" style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Hash size={14} aria-hidden="true" /> TAGS
+                <Hash size={14} aria-hidden="true" /> KEYWORDS
               </label>
               <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#4b5563' }}>
                 <span style={{ 
@@ -355,7 +462,7 @@ const Form = () => {
               <input 
                 id="tagInput"
                 type="text" 
-                placeholder="Press Enter to add tag…" 
+                placeholder="Type and press Enter…" 
                 maxLength={25}
                 value={currentTag}
                 onChange={(e) => setCurrentTag(e.target.value)}
@@ -381,6 +488,33 @@ const Form = () => {
                 ))}
               </AnimatePresence>
             </div>
+
+            <AnimatePresence>
+              {suggestions.tags && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -10 }} 
+                  animate={{ opacity: 1, y: 0 }} 
+                  exit={{ opacity: 0, y: -10 }}
+                  style={{ 
+                    marginTop: '8px', padding: '14px', background: 'rgba(74, 222, 128, 0.05)', 
+                    border: '1px dashed #4ade80', borderRadius: '12px' 
+                  }}
+                >
+                  <div style={{ color: '#4ade80', fontSize: '0.75rem', fontWeight: 800, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sparkles size={14} /> AI RECOMMENDED KEYWORDS
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                    {suggestions.tags.map(t => (
+                      <span key={t} style={{ padding: '2px 8px', background: 'rgba(74, 222, 128, 0.1)', borderRadius: '4px', fontSize: '0.7rem', color: '#4ade80' }}>{t}</span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button type="button" onClick={() => acceptSuggestion('tags')} style={{ padding: '6px 16px', background: '#4ade80', border: 'none', borderRadius: '6px', color: '#050505', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><ThumbsUp size={12}/> Accept All</button>
+                    <button type="button" onClick={() => rejectSuggestion('tags')} style={{ padding: '6px 16px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'white', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}><ThumbsDown size={12}/> Reject</button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
@@ -439,3 +573,4 @@ const Form = () => {
 };
 
 export default Form;
+
