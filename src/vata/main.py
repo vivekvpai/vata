@@ -5,13 +5,14 @@ from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
+from .agents import run_agent
 
 app = FastAPI(title="Vata API")
 
 # --- API Router ---
 api_router = APIRouter(prefix="/api")
 
-DATA_DIR = Path(__file__).parent / "data"
+DATA_DIR = Path.home() / ".vata" / "data"
 CATEGORY_REGISTRY_FILE = DATA_DIR / "category.json"
 
 
@@ -230,6 +231,44 @@ async def rename_category(category: str, request: CategoryRenameRequest):
         "new_name": new_name,
         "files_renamed": len(new_filenames)
     }
+
+
+class SuggestionRequest(BaseModel):
+    main_content: str
+    summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+@api_router.post("/suggestions")
+async def get_suggestions(request: SuggestionRequest):
+    """Call the Suggestion AI agent and return parsed JSON results."""
+    # Build a prompt that includes current context and existing categories
+    registry = load_category_registry()
+    existing_categories = list(registry.keys())
+
+    context = f"Main Content: {request.main_content}\n"
+    if request.summary:
+        context += f"Current Summary: {request.summary}\n"
+    if request.tags:
+        context += f"Current Tags: {', '.join(request.tags)}\n"
+    
+    context += f"\nExisting Categories in the system: {', '.join(existing_categories)}\n"
+    context += "\nEvaluate all the above information collectively to provide the most coherent and unified suggestions possible."
+
+    try:
+        raw_response = await run_agent("suggestion_ai", context)
+        # Attempt to parse json from model
+        # Models sometimes wrap in markdown blocks despite instructions
+        clean_json = raw_response.strip()
+        if clean_json.startswith("```json"):
+            clean_json = clean_json.split("```json", 1)[1].split("```", 1)[0].strip()
+        elif clean_json.startswith("```"):
+            clean_json = clean_json.split("```", 1)[1].split("```", 1)[0].strip()
+
+        return json.loads(clean_json)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Agent Error: {str(e)}")
+
 
 app.include_router(api_router)
 

@@ -256,17 +256,34 @@ const Form = () => {
     }
 
     setIsAiLoading(true);
-    // Simulate AI Processing
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    setSuggestions({
-      summary: "This implementation leverages GPU-accelerated rendering via Graphistry for real-time visualization of multi-million node datasets, optimizing network analysis performance and interactive exploration.",
-      category: "Analytics",
-      tags: ["Graphistry", "GPU", "Performance", "Big Data", "Visual intelligence"]
-    });
-    
-    setIsAiLoading(false);
-    showToast('info', 'AI Suggestions Ready', 'Review the suggested improvements below each field.');
+    try {
+      const response = await fetch('/api/suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          main_content: formData.main_content,
+          summary: formData.summary,
+          tags: tags
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSuggestions({
+          summary: data.summary || null,
+          category: data.category || null,
+          tags: data.tags || null
+        });
+        showToast('info', 'AI Suggestions Ready', 'Review the suggested improvements below each field.');
+      } else {
+        const err = await response.json();
+        showToast('error', 'AI Processing Failed', err.detail || 'The AI agent encountered an error.');
+      }
+    } catch (error) {
+      showToast('error', 'Network Error', 'Could not connect to the AI service.');
+    } finally {
+      setIsAiLoading(false);
+    }
   };
 
   const isFormValid = formData.main_content.length >= 10 && formData.category !== '' && tags.length > 0;
@@ -518,26 +535,43 @@ const Form = () => {
               {isAiLoading ? 'ANALYZING…' : 'SUGGEST AI'}
             </button>
 
-            {/* Accept All Button */}
+            {/* Suggestion Actions */}
             {(suggestions.summary || suggestions.tags || suggestions.category) && (
-              <motion.button 
-                initial={{ opacity: 0, x: 10 }}
-                animate={{ opacity: 1, x: 0 }}
-                onClick={() => {
-                  if (suggestions.summary) acceptSuggestion('summary');
-                  if (suggestions.tags) acceptSuggestion('tags');
-                  if (suggestions.category) acceptSuggestion('category');
-                  showToast('success', 'All Suggestions Applied', 'Successfully integrated all AI improvements.');
-                }}
-                className="accent-glow"
-                style={{
-                  padding: '8px 16px', background: '#22c55e', border: 'none', borderRadius: '8px',
-                  color: '#050505', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem',
-                  boxShadow: '0 0 15px rgba(34, 197, 94, 0.3)'
-                }}
-              >
-                <Check size={14} /> ACCEPT ALL
-              </motion.button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <motion.button 
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  onClick={() => {
+                    if (suggestions.summary) acceptSuggestion('summary');
+                    if (suggestions.tags) acceptSuggestion('tags');
+                    if (suggestions.category) acceptSuggestion('category');
+                    showToast('success', 'All Suggestions Applied', 'Successfully integrated all AI improvements.');
+                  }}
+                  className="accent-glow"
+                  style={{
+                    padding: '8px 16px', background: '#22c55e', border: 'none', borderRadius: '8px',
+                    color: '#050505', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem',
+                    boxShadow: '0 0 15px rgba(34, 197, 94, 0.3)'
+                  }}
+                >
+                  <Check size={14} /> ACCEPT ALL
+                </motion.button>
+
+                <motion.button 
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  onClick={() => {
+                    setSuggestions({ summary: null, tags: null, category: null });
+                    showToast('alert', 'All Suggestions Rejected', 'Dismissed all AI improvements.');
+                  }}
+                  style={{
+                    padding: '8px 16px', background: 'rgba(255, 77, 77, 0.05)', border: '1px solid rgba(255, 77, 77, 0.2)', borderRadius: '8px',
+                    color: '#ff4d4d', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.8rem'
+                  }}
+                >
+                  <X size={14} /> REJECT ALL
+                </motion.button>
+              </div>
             )}
           </div>
         </div>
