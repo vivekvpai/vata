@@ -1,13 +1,14 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
-import { Home, History, FilePlus, LogOut } from "lucide-react";
+import { Home, History, FilePlus, Database, LogOut } from "lucide-react";
 import logo from "../assets/icon.png";
 
 const Navigation = () => {
   const navItems = [
     { title: "Home", path: "/", icon: Home },
     { title: "History", path: "/history", icon: History },
-    { title: "Form", path: "/form", icon: FilePlus },
+    { title: "Add Asset", path: "/form", icon: FilePlus },
+    { title: "Manage Assets", path: "/manage", icon: Database },
   ];
 
   return (

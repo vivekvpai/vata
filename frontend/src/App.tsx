@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import History from './pages/History';
 import Form from './pages/Form';
+import ManageAssets from './pages/ManageAssets';
 import { ToastProvider } from './contexts/ToastContext';
 import ToastContainer from './components/ToastContainer';
 
@@ -15,6 +16,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/history" element={<History />} />
             <Route path="/form" element={<Form />} />
+            <Route path="/manage" element={<ManageAssets />} />
           </Routes>
         </Layout>
       </Router>

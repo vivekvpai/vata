@@ -3,9 +3,21 @@ import { Plus, X, FileText, Layout, Hash, Send, Sparkles, Loader2, Bookmark, Plu
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '../contexts/ToastContext';
 import ConfirmModal from '../components/ConfirmModal';
+import { CategoryService } from '../services/categoryService';
+import { AssetService } from '../services/assetService';
+import { AIService } from '../services/aiService';
 
 
 const Form = () => {
+  const formatCategoryName = (id: string | null) => {
+    if (!id) return '';
+    const parts = id.split('_');
+    if (parts.length > 1) {
+      return parts.slice(0, -1).join('_');
+    }
+    return id;
+  };
+
   const [categories, setCategories] = useState<string[]>([]);
   const [isCategoryLoading, setIsCategoryLoading] = useState(false);
   const [newCategory, setNewCategory] = useState('');
@@ -20,7 +32,7 @@ const Form = () => {
   });
   const [tags, setTags] = useState<string[]>([]);
   const [currentTag, setCurrentTag] = useState('');
-  const [submittedJson, setSubmittedJson] = useState<string | null>(null);
+
   const [isAiLoading, setIsAiLoading] = useState(false);
   
   // Suggestion State
@@ -33,9 +45,6 @@ const Form = () => {
     tags: null,
     category: null
   });
-  
-  const [history, setHistory] = useState<string[]>([]);
-  const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
 
   // Deletion State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -46,95 +55,18 @@ const Form = () => {
   const fetchCategories = async () => {
     setIsCategoryLoading(true);
     try {
-      const response = await fetch('/api/categories');
-      if (response.ok) {
-        const data = await response.json();
-        // Backend returns dict { category_name: [files] }
-        setCategories(Object.keys(data));
-      } else {
-        showToast('error', 'Fetch Failed', 'Could not load categories from server.');
-      }
+      const data = await CategoryService.getCategories();
+      setCategories(Object.keys(data));
     } catch (error) {
-      showToast('error', 'Fetch Error', 'Network error while fetching categories.');
+      showToast('error', 'Fetch Error', error instanceof Error ? error.message : 'Network error while fetching categories.');
     } finally {
       setIsCategoryLoading(false);
-    }
-  };
-
-  const fetchHistory = async (category: string) => {
-    try {
-      const response = await fetch(`/api/categories/${category}`);
-      if (response.ok) {
-        const data = await response.json();
-        setHistory(data.files || []);
-      }
-    } catch (error) {
-      console.error("Failed to fetch history:", error);
     }
   };
 
   useEffect(() => {
     fetchCategories();
   }, [showToast]);
-
-  useEffect(() => {
-    if (formData.category) {
-      fetchHistory(formData.category);
-    } else {
-      setHistory([]);
-    }
-  }, [formData.category]);
-
-  const loadAsset = async (filename: string) => {
-    try {
-      const response = await fetch(`/api/categories/${formData.category}`);
-      if (response.ok) {
-        const data = await response.json();
-        // Since get_category returns the latest content, we might need a more specific getter
-        // But for now, let's assume get_category content is what we want if it's the latest
-        // Or fetch specific file content if we had an endpoint for that.
-        // Actually, main.py get_category returns the *resolved* (latest) file.
-        // Let's assume we load the version context.
-        const content = data.content;
-        if (content && content.data) {
-          setFormData({
-            main_content: content.data.main_content || '',
-            summary: content.data.summary || '',
-            category: content.category || formData.category,
-          });
-          setTags(content.data.tags || []);
-          setSelectedAsset(filename);
-          showToast('info', 'Asset Loaded', `Loaded version: ${filename.split('_')[1].split('.')[0]}`);
-        }
-      }
-    } catch (error) {
-      showToast('error', 'Load Failed', 'Could not fetch asset content.');
-    }
-  };
-
-  const deleteAsset = async (filename: string) => {
-    if (!window.confirm(`Are you sure you want to delete this specific version?`)) return;
-    
-    setIsCategoryLoading(true);
-    try {
-      const response = await fetch(`/api/categories/${formData.category}/files/${filename}`, {
-        method: 'DELETE'
-      });
-      if (response.ok) {
-        showToast('alert', 'Version Deleted', 'Specific asset version has been removed.');
-        fetchHistory(formData.category);
-        if (selectedAsset === filename) {
-          setSelectedAsset(null);
-        }
-      } else {
-        showToast('error', 'Deletion Failed', 'Server rejected asset deletion.');
-      }
-    } catch (error) {
-      showToast('error', 'Network Error', 'Could not delete asset.');
-    } finally {
-      setIsCategoryLoading(false);
-    }
-  };
 
   const addTag = () => {
     if (currentTag.trim() && tags.length < 10 && !tags.includes(currentTag.trim())) {
@@ -151,23 +83,14 @@ const Form = () => {
     if (newCategory.trim() && !categories.includes(newCategory.trim())) {
       setIsCategoryLoading(true);
       try {
-        const response = await fetch('/api/categories', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ category: newCategory.trim() })
-        });
-        
-        if (response.ok) {
-          setCategories([...categories, newCategory.trim()]);
-          setFormData(prev => ({ ...prev, category: newCategory.trim() }));
-          setNewCategory('');
-          setIsAddingCategory(false);
-          showToast('success', 'Category Created', `"${newCategory.trim()}" has been added.`);
-        } else {
-          showToast('error', 'Creation Failed', 'Server rejected category creation.');
-        }
+        const data = await CategoryService.createCategory(newCategory.trim());
+        setCategories([...categories, data.category_id]);
+        setFormData(prev => ({ ...prev, category: data.category_id }));
+        setNewCategory('');
+        setIsAddingCategory(false);
+        showToast('success', 'Category Created', `"${newCategory.trim()}" has been added.`);
       } catch (error) {
-        showToast('error', 'Network Error', 'Could not connect to the server.');
+        showToast('error', 'Creation Failed', error instanceof Error ? error.message : 'Could not connect to the server.');
       } finally {
         setIsCategoryLoading(false);
       }
@@ -183,26 +106,16 @@ const Form = () => {
 
       setIsCategoryLoading(true);
       try {
-        const response = await fetch(`/api/categories/${oldName}/rename`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ new_name: editValue.trim() })
-        });
-
-        if (response.ok) {
-          setCategories(categories.map(c => c === oldName ? editValue.trim() : c));
-          if (formData.category === oldName) {
-            setFormData(prev => ({ ...prev, category: editValue.trim() }));
-          }
-          setEditingCategory(null);
-          setEditValue('');
-          showToast('success', 'Category Updated', `Renamed "${oldName}" to "${editValue.trim()}".`);
-        } else {
-          const err = await response.json();
-          showToast('error', 'Update Failed', err.detail || 'Could not rename category.');
+        const data = await CategoryService.updateCategoryName(oldName, editValue.trim());
+        setCategories(categories.map(c => c === oldName ? data.new_id : c));
+        if (formData.category === oldName) {
+          setFormData(prev => ({ ...prev, category: data.new_id }));
         }
+        setEditingCategory(null);
+        setEditValue('');
+        showToast('success', 'Category Updated', `Renamed "${formatCategoryName(oldName)}" to "${editValue.trim()}".`);
       } catch (error) {
-        showToast('error', 'Network Error', 'Could not connect to the server.');
+        showToast('error', 'Update Failed', error instanceof Error ? error.message : 'Could not connect to the server.');
       } finally {
         setIsCategoryLoading(false);
       }
@@ -218,35 +131,30 @@ const Form = () => {
     if (categoryToDelete) {
       setIsCategoryLoading(true);
       try {
-        const response = await fetch(`/api/categories/${categoryToDelete}`, {
-          method: 'DELETE'
-        });
-
-        if (response.ok) {
-          setCategories(categories.filter(c => c !== categoryToDelete));
-          if (formData.category === categoryToDelete) {
-            setFormData(prev => ({ ...prev, category: '' }));
-          }
-          showToast('alert', 'Category Deleted', `"${categoryToDelete}" has been removed.`);
-          setCategoryToDelete(null);
-          setIsDeleteModalOpen(false);
-        } else {
-          showToast('error', 'Deletion Failed', 'Server rejected category deletion.');
+        await CategoryService.deleteCategory(categoryToDelete);
+        setCategories(categories.filter(c => c !== categoryToDelete));
+        if (formData.category === categoryToDelete) {
+          setFormData(prev => ({ ...prev, category: '' }));
         }
+        showToast('alert', 'Category Deleted', `"${categoryToDelete}" has been removed.`);
+        setCategoryToDelete(null);
+        setIsDeleteModalOpen(false);
       } catch (error) {
-        showToast('error', 'Network Error', 'Could not connect to the server.');
+        showToast('error', 'Deletion Failed', error instanceof Error ? error.message : 'Could not connect to the server.');
       } finally {
         setIsCategoryLoading(false);
       }
     }
   };
 
-  const clearForm = () => {
+  const clearForm = (showNotification = true) => {
     setFormData({ main_content: '', summary: '', category: '' });
     setTags([]);
     setSuggestions({ summary: null, tags: null, category: null });
-    setSubmittedJson(null);
-    showToast('info', 'Form Cleared', 'All fields have been reset.');
+
+    if (showNotification) {
+      showToast('info', 'Form Cleared', 'All fields have been reset.');
+    }
   };
 
   const handleSuggestAi = async () => {
@@ -257,69 +165,48 @@ const Form = () => {
 
     setIsAiLoading(true);
     try {
-      const response = await fetch('/api/suggestions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          main_content: formData.main_content,
-          summary: formData.summary,
-          tags: tags
-        })
+      const data = await AIService.getSuggestions({
+        main_content: formData.main_content,
+        summary: formData.summary,
+        tags: tags
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setSuggestions({
-          summary: data.summary || null,
-          category: data.category || null,
-          tags: data.tags || null
-        });
-        showToast('info', 'AI Suggestions Ready', 'Review the suggested improvements below each field.');
-      } else {
-        const err = await response.json();
-        showToast('error', 'AI Processing Failed', err.detail || 'The AI agent encountered an error.');
-      }
+      setSuggestions({
+        summary: data.summary || null,
+        category: data.category || null,
+        tags: data.tags || null
+      });
+      showToast('info', 'AI Suggestions Ready', 'Review the suggested improvements below each field.');
     } catch (error) {
-      showToast('error', 'Network Error', 'Could not connect to the AI service.');
+      showToast('error', 'AI Processing Failed', error instanceof Error ? error.message : 'Could not connect to the AI service.');
     } finally {
       setIsAiLoading(false);
     }
   };
 
-  const isFormValid = formData.main_content.length >= 10 && formData.category !== '' && tags.length > 0;
+  const hasPendingSuggestions = suggestions.summary !== null || suggestions.tags !== null || suggestions.category !== null;
+  const isFormValid = formData.main_content.length >= 10 && formData.category !== '' && tags.length > 0 && !hasPendingSuggestions;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isFormValid) return;
+    if (!isFormValid) {
+      if (hasPendingSuggestions) {
+        showToast('alert', 'Pending Suggestions', 'Please accept or reject all AI suggestions before saving.');
+      }
+      return;
+    }
 
     setIsCategoryLoading(true);
     try {
-      // If selectedAsset is already set, we might want to update (PUT)
-      // but for simplicity, let's always create a new version (POST)
-      // as it's more "Vata" like (versioned)
-      const response = await fetch('/api/categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          category: formData.category,
-          data: {
-            main_content: formData.main_content,
-            summary: formData.summary,
-            tags: tags
-          }
-        })
+      await AssetService.createAsset(formData.category, {
+        main_content: formData.main_content,
+        summary: formData.summary,
+        tags: tags
       });
-
-      if (response.ok) {
-        const finalData = { ...formData, tags };
-        setSubmittedJson(JSON.stringify(finalData, null, 2));
-        showToast('success', 'Asset Saved', 'Your digital asset has been successfully recorded.');
-        fetchHistory(formData.category);
-      } else {
-        showToast('error', 'Save Failed', 'Server rejected asset submission.');
-      }
+      showToast('success', 'Asset Saved', 'Your digital asset has been successfully recorded.');
+      clearForm(false);
     } catch (error) {
-      showToast('error', 'Network Error', 'Could not save asset to server.');
+      showToast('error', 'Save Failed', error instanceof Error ? error.message : 'Could not save asset to server.');
     } finally {
       setIsCategoryLoading(false);
     }
@@ -418,7 +305,7 @@ const Form = () => {
                <div style={{ color: '#4ade80', fontWeight: 700, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                  <Sparkles size={12} /> SUGGESTED CATEGORY
                </div>
-               <div style={{ color: 'white', marginBottom: '8px', fontWeight: 600 }}>{suggestions.category}</div>
+               <div style={{ color: 'white', marginBottom: '8px', fontWeight: 600 }}>{formatCategoryName(suggestions.category)}</div>
                <div style={{ display: 'flex', gap: '4px' }}>
                  <button onClick={() => acceptSuggestion('category')} style={{ flex: 1, padding: '4px', background: '#4ade80', border: 'none', borderRadius: '4px', color: '#050505', fontWeight: 700, cursor: 'pointer', fontSize: '0.65rem' }}>ACCEPT</button>
                  <button onClick={() => rejectSuggestion('category')} style={{ flex: 0.5, padding: '4px', background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.65rem' }}>X</button>
@@ -476,13 +363,13 @@ const Form = () => {
                           style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent)', boxShadow: '0 0 10px var(--accent)' }} 
                         />
                       )}
-                      <span>{cat}</span>
+                      <span>{formatCategoryName(cat)}</span>
                     </div>
                   </motion.button>
                   
                   <div className="category-actions" style={{ position: 'absolute', right: '8px', display: 'flex', gap: '4px', opacity: 0.2, transition: 'opacity 0.2s ease' }}>
                     <button 
-                      onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); setEditValue(cat); }}
+                      onClick={(e) => { e.stopPropagation(); setEditingCategory(cat); setEditValue(formatCategoryName(cat)); }}
                       style={{ background: 'transparent', border: 'none', color: '#9ca3af', cursor: 'pointer', padding: '4px' }}
                     >
                       <Pencil size={14} />
@@ -515,7 +402,7 @@ const Form = () => {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button 
               type="button" 
-              onClick={clearForm}
+              onClick={() => clearForm()}
               aria-label="Clear form"
               style={{ padding: '8px 12px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: '#9ca3af', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '0.75rem' }}
             >
@@ -575,42 +462,6 @@ const Form = () => {
             )}
           </div>
         </div>
-
-        {/* Category History - Mini Row */}
-        <AnimatePresence>
-          {formData.category && history.length > 0 && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }} 
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              style={{ paddingBottom: '16px', overflow: 'hidden' }}
-            >
-              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px' }} className="scrollbar-hide">
-                {history.map((fname, idx) => (
-                  <motion.div 
-                    key={fname}
-                    whileHover={{ scale: 1.05 }}
-                    style={{ 
-                      flexShrink: 0, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', 
-                      border: selectedAsset === fname ? '1px solid var(--accent)' : '1px solid var(--glass-border)',
-                      borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
-                      fontSize: '0.7rem', color: selectedAsset === fname ? 'white' : '#9ca3af'
-                    }}
-                    onClick={() => loadAsset(fname)}
-                  >
-                    <Bookmark size={12} /> Version v{history.length - idx}
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); deleteAsset(fname); }}
-                      style={{ background: 'transparent', border: 'none', color: '#ff4d4d', cursor: 'pointer', display: 'flex', marginLeft: '4px' }}
-                    >
-                      <X size={10} />
-                    </button>
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
           {/* Main Content */}
@@ -790,27 +641,18 @@ const Form = () => {
               }}
             >
               <Send size={16} aria-hidden="true" /> 
-              {isFormValid ? 'SAVE ASSET' : 'INCOMPLETE FORM'}
+              {isFormValid ? 'SAVE ASSET' : (hasPendingSuggestions ? 'HANDLE SUGGESTIONS' : 'INCOMPLETE FORM')}
             </button>
           </div>
         </form>
 
-        <AnimatePresence>
-          {submittedJson && (
-            <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} style={{ marginTop: '20px', paddingBottom: '60px' }}>
-              <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#9ca3af', marginBottom: '14px' }}>STRUCTURED RECORD</h3>
-              <pre style={{ padding: '28px', borderRadius: '20px', background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(255, 122, 26, 0.15)', color: 'var(--accent)', fontSize: '0.9rem', lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
-                {submittedJson}
-              </pre>
-            </motion.div>
-          )}
-        </AnimatePresence>
+
       </div>
 
       <ConfirmModal 
         isOpen={isDeleteModalOpen}
         title="Delete Category?"
-        message={`Are you sure you want to delete "${categoryToDelete}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete "${formatCategoryName(categoryToDelete)}"? This action cannot be undone.`}
         confirmText="Delete"
         onConfirm={confirmDelete}
         onCancel={() => {
