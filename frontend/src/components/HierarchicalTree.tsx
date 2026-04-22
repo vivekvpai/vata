@@ -1,9 +1,14 @@
 import React, { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import * as d3 from "d3";
 
 export interface TreeNode {
   name: string;
   children?: TreeNode[];
+  summary?: string;
+  tags?: string[];
+  contentSnippet?: string;
+  type?: "root" | "category" | "asset";
 }
 
 interface HierarchicalTreeProps {
@@ -18,7 +23,14 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
   width = 800 
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [selectedNodes, setSelectedNodes] = useState<Set<string>>(new Set());
+  const [hoveredNode, setHoveredNode] = useState<{
+    data: TreeNode;
+    x: number;
+    y: number;
+  } | null>(null);
+
   const selectedCount = selectedNodes.size;
 
   useEffect(() => {
@@ -86,22 +98,49 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
       .style("cursor", "pointer")
       .on("click", (event, d) => {
         event.stopPropagation();
-
-        // Get all descendant names
         const descendants = d.descendants().map((node) => node.data.name);
         const isCurrentlySelected = selectedNodes.has(d.data.name);
 
         setSelectedNodes((prev) => {
           const next = new Set(prev);
           if (isCurrentlySelected) {
-            // Deselect node and all children
             descendants.forEach((name) => next.delete(name));
           } else {
-            // Select node and all children
             descendants.forEach((name) => next.add(name));
           }
           return next;
         });
+      })
+      .on("mouseenter", (event, d) => {
+        // Only show tooltip for categories with assets or asset nodes
+        if (d.data.type === "root") return;
+        
+        d3.select(event.currentTarget)
+          .select("circle")
+          .transition()
+          .duration(200)
+          .attr("r", 38);
+
+        // Get relative position for tooltip
+        const [mx, my] = d3.pointer(event, containerRef.current);
+        setHoveredNode({
+          data: d.data,
+          x: mx,
+          y: my,
+        });
+      })
+      .on("mousemove", (event) => {
+        const [mx, my] = d3.pointer(event, containerRef.current);
+        setHoveredNode(prev => prev ? { ...prev, x: mx, y: my } : null);
+      })
+      .on("mouseleave", (event, d) => {
+        d3.select(event.currentTarget)
+          .select("circle")
+          .transition()
+          .duration(200)
+          .attr("r", 32);
+        
+        setHoveredNode(null);
       });
 
     // Node Circle
@@ -135,7 +174,8 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
       .style("letter-spacing", "0.5px")
       .attr("fill", (d) =>
         selectedNodes.has(d.data.name) ? "#4ade80" : "#ffffff",
-      );
+      )
+      .style("pointer-events", "none");
 
     // Indicator Dot (Inverted placement)
     node
@@ -144,11 +184,13 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
       .attr("cy", 32)
       .attr("fill", (d) =>
         selectedNodes.has(d.data.name) ? "#4ade80" : "var(--accent)",
-      );
+      )
+      .style("pointer-events", "none");
   }, [data, selectedNodes, height, width]);
 
   return (
     <div
+      ref={containerRef}
       style={{
         width: "100%",
         background: "rgba(0,0,0,0.4)",
@@ -157,6 +199,7 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
         padding: "24px",
         overflow: "hidden",
         marginTop: "16px",
+        position: "relative",
       }}
     >
       <svg
@@ -166,6 +209,89 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
       />
+
+      <AnimatePresence>
+        {hoveredNode && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            style={{
+              position: "absolute",
+              left: hoveredNode.x + 20,
+              top: hoveredNode.y - 20,
+              width: "280px",
+              pointerEvents: "none",
+              zIndex: 100,
+              padding: "16px",
+              borderRadius: "16px",
+              background: "rgba(10, 10, 10, 0.95)",
+              backdropFilter: "blur(20px)",
+              border: "1px solid var(--glass-border)",
+              boxShadow: "0 10px 40px rgba(0,0,0,0.6)",
+            }}
+          >
+            <div style={{ marginBottom: "12px" }}>
+              <span style={{ fontSize: "0.6rem", color: "var(--accent)", fontWeight: 800, letterSpacing: "1px" }}>
+                {hoveredNode.data.type?.toUpperCase()} NAME
+              </span>
+              <h4 style={{ color: "white", fontSize: "1rem", marginTop: "2px" }}>{hoveredNode.data.name}</h4>
+            </div>
+
+            {hoveredNode.data.summary && (
+              <div style={{ marginBottom: "12px" }}>
+                <span style={{ fontSize: "0.6rem", color: "var(--accent)", opacity: 0.8, fontWeight: 700 }}>SUMMARY</span>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.8rem", lineHeight: "1.4", marginTop: "4px" }}>
+                  {hoveredNode.data.summary}
+                </p>
+              </div>
+            )}
+
+            {hoveredNode.data.tags && hoveredNode.data.tags.length > 0 && (
+              <div style={{ marginBottom: "12px" }}>
+                <span style={{ fontSize: "0.6rem", color: "var(--accent)", opacity: 0.8, fontWeight: 700 }}>KEYWORDS</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
+                  {hoveredNode.data.tags.map((tag, i) => (
+                    <span 
+                      key={i} 
+                      style={{ 
+                        fontSize: "0.7rem", 
+                        background: "rgba(255, 255, 255, 0.05)", 
+                        padding: "2px 8px", 
+                        borderRadius: "4px",
+                        color: "white" 
+                      }}
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {hoveredNode.data.contentSnippet && (
+              <div>
+                <span style={{ fontSize: "0.6rem", color: "var(--accent)", opacity: 0.8, fontWeight: 700 }}>
+                  CONTENT PREVIEW
+                </span>
+                <p style={{ 
+                  color: "var(--text-secondary)", 
+                  fontSize: "0.75rem", 
+                  lineHeight: "1.4", 
+                  marginTop: "4px",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 3,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden"
+                }}>
+                  {hoveredNode.data.contentSnippet}
+                </p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div
         style={{
           display: "flex",

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import * as d3 from "d3";
 
 import HierarchicalTree, { TreeNode } from "../components/HierarchicalTree";
+import { DecisionService, DecisionResult } from "../services/decisionService";
 
 interface Message {
   id: string;
@@ -22,48 +23,95 @@ const Home = () => {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const [isQuerying, setIsQuerying] = useState(false);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isQuerying]);
 
-  const handleSend = (overrideInput?: string) => {
+  const buildTreeFromDecision = (data: DecisionResult[]): TreeNode => {
+    const grouped = new Map<string, DecisionResult[]>();
+    for (const item of data) {
+      const list = grouped.get(item.category) || [];
+      list.push(item);
+      grouped.set(item.category, list);
+    }
+
+    const children: TreeNode[] = [];
+    for (const [category, assets] of grouped) {
+      children.push({
+        name: category.toUpperCase(),
+        type: "category",
+        children: assets.map((a) => ({
+          name: a.asset_id,
+          type: "asset",
+          summary: a.summary,
+          tags: a.tags,
+          contentSnippet: a.content_snippet,
+        })),
+      });
+    }
+
+    return {
+      name: "ALL",
+      type: "root",
+      children,
+    };
+  };
+
+  const handleSend = async (overrideInput?: string) => {
     const text = overrideInput || input;
-    if (!text.trim()) return;
+    if (!text.trim() || isQuerying) return;
 
-    setMessages((prev) => [
-      ...prev,
-      { id: Date.now().toString(), role: "user", content: text },
-    ]);
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: text,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
     if (!overrideInput) setInput("");
 
-    setTimeout(() => {
-      const tree: TreeNode = {
-        name: "KNOWLEDGE BASE",
-        children: [
-          {
-            name: "ASSETS",
-            children: [{ name: "LINKS" }, { name: "TEXT" }],
-          },
-          {
-            name: "SUMMARIES",
-            children: [{ name: "AI INSIGHTS" }, { name: "REPORTS" }],
-          },
-        ],
-      };
+    setIsQuerying(true);
 
+    try {
+      const response = await DecisionService.query(text);
+
+      if (response.count > 0) {
+        const tree = buildTreeFromDecision(response.data);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: "assistant",
+            content: `I've analyzed your request and identified ${response.count} relevant asset(s) across ${new Set(response.data.map(d => d.category)).size} categories. Here is the visualized map of the findings:`,
+            type: "tree",
+            treeData: tree,
+            showAction: true,
+          },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: (Date.now() + 1).toString(),
+            role: "assistant",
+            content: "I couldn't find any assets that match your query across the current knowledge base categories.",
+          },
+        ]);
+      }
+    } catch (error: any) {
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content:
-            "I've found relevant assets and summarized them for you. You can see how they are connected in the map below.",
-          type: "tree",
-          treeData: tree,
-          showAction: true,
+          content: `Sorry, I encountered an error while processing your request: ${error.message}`,
         },
       ]);
-    }, 1000);
+    } finally {
+      setIsQuerying(false);
+    }
   };
 
   return (
@@ -341,6 +389,51 @@ const Home = () => {
                 )}
               </motion.div>
             ))}
+            {isQuerying && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{
+                  display: "flex",
+                  gap: "20px",
+                  width: "100%",
+                  padding: "0 10px",
+                }}
+              >
+                <div
+                  style={{
+                    width: "36px",
+                    height: "36px",
+                    borderRadius: "10px",
+                    background: "rgba(255, 255, 255, 0.05)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    marginTop: "4px",
+                    border: "1px solid var(--glass-border)",
+                  }}
+                >
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  >
+                    <Sparkles size={18} color="var(--accent)" />
+                  </motion.div>
+                </div>
+                <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
+                  <p
+                    style={{
+                      color: "var(--text-secondary)",
+                      fontSize: "0.95rem",
+                      fontStyle: "italic",
+                    }}
+                  >
+                    Searching across categories and evaluating relevance...
+                  </p>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
         )}
         <div ref={messagesEndRef} />

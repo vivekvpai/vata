@@ -4,6 +4,8 @@ import webbrowser
 import threading
 import time
 
+from vata.services.category_service import ensure_data_dir
+
 # Create the Typer app with an explicit name to avoid auto-merging
 app = typer.Typer(help="Vata CLI - Local-First Knowledge Graph")
 
@@ -14,10 +16,10 @@ def main():
     """Knowledge Graph management on your local machine."""
     pass
 
-def open_browser():
+def open_browser(host: str, port: int):
     """Wait for server to start, then open the browser."""
     time.sleep(1.5)
-    webbrowser.open("http://127.0.0.1:8000")
+    webbrowser.open(f"http://{host}:{port}")
 
 @app.command()
 def start(
@@ -28,8 +30,11 @@ def start(
     """Launch the Vata server and open the web UI."""
     typer.echo(f"Starting Vata at http://{host}:{port}")
     
+    # Ensure data directory exists before starting
+    ensure_data_dir()
+    
     # Start browser in a background thread
-    threading.Thread(target=open_browser, daemon=True).start()
+    threading.Thread(target=open_browser, args=(host, port), daemon=True).start()
     
     # Launch Uvicorn
     # Note: Using "vata.main:app" string format allows --reload to work

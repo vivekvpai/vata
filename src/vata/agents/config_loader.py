@@ -18,7 +18,22 @@ def get_default_config() -> Dict[str, Any]:
             raise FileNotFoundError(f"Configuration file not found at {default_packaged_config}")
         
     with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        user_config = json.load(f)
+
+    # Merge package defaults for newly added agents
+    default_packaged_config = Path(__file__).parent / "config.json"
+    if default_packaged_config.exists():
+        with open(default_packaged_config, "r", encoding="utf-8") as f:
+            packaged_config = json.load(f)
+        
+        if "agents" in packaged_config:
+            if "agents" not in user_config:
+                user_config["agents"] = {}
+            for agent_name, agent_data in packaged_config["agents"].items():
+                if agent_name not in user_config["agents"]:
+                    user_config["agents"][agent_name] = agent_data
+
+    return user_config
 
 def get_agent_config(agent_key: str) -> Dict[str, Any]:
     """Retrieve configuration for a specific agent by its key (e.g., 'suggestion_ai')."""
