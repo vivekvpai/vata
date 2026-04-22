@@ -16,11 +16,16 @@ from .services.category_service import (
     add_asset_to_category_record,
     update_asset_in_record,
     delete_asset_from_record,
+    ensure_data_dir,
 )
 from .services.ai_service import fetch_ai_suggestions
 from .services.decision_service import evaluate_nodes_for_query
 
 app = FastAPI(title="Vata API")
+
+@app.on_event("startup")
+async def startup_event():
+    ensure_data_dir()
 
 # --- API Router ---
 api_router = APIRouter(prefix="/api")
