@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { ExternalLink, X } from "lucide-react";
 import * as d3 from "d3";
 
 export interface TreeNode {
@@ -15,12 +16,14 @@ interface HierarchicalTreeProps {
   data: TreeNode;
   height?: number;
   width?: number;
+  onNodeClick?: (node: TreeNode) => void;
 }
 
 const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({ 
   data, 
   height = 400, 
-  width = 800 
+  width = 800,
+  onNodeClick
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -30,6 +33,16 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
     x: number;
     y: number;
   } | null>(null);
+  const [selectedSideNode, setSelectedSideNode] = useState<TreeNode | null>(null);
+
+  const isUrl = (str: string) => {
+    try {
+      new URL(str);
+      return true;
+    } catch {
+      return str.startsWith("http://") || str.startsWith("https://");
+    }
+  };
 
   const selectedCount = selectedNodes.size;
 
@@ -40,6 +53,10 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
 
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
+
+    svg.on("click", () => {
+      setSelectedSideNode(null);
+    });
 
     // Create a zoom-able container group
     const zoomableGroup = svg.append("g").attr("class", "zoom-container");
@@ -110,6 +127,16 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
           }
           return next;
         });
+
+        if (onNodeClick) {
+          onNodeClick(d.data);
+        }
+        
+        if (d.data.type === "asset") {
+          setSelectedSideNode(d.data);
+        } else {
+          setSelectedSideNode(null);
+        }
       })
       .on("mouseenter", (event, d) => {
         // Only show tooltip for categories with assets or asset nodes
@@ -367,6 +394,142 @@ const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Internal Side Panel */}
+      <AnimatePresence>
+        {selectedSideNode && (
+          <motion.div
+            initial={{ x: "100%", opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: "100%", opacity: 0 }}
+            transition={{ type: "spring", damping: 30, stiffness: 300 }}
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: "320px",
+              background: "rgba(10, 10, 10, 0.98)",
+              backdropFilter: "blur(25px)",
+              borderLeft: "1px solid var(--glass-border)",
+              padding: "30px 24px",
+              zIndex: 150,
+              display: "flex",
+              flexDirection: "column",
+              gap: "20px",
+              boxShadow: "-10px 0 30px rgba(0,0,0,0.5)",
+              overflowY: "auto",
+            }}
+          >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedSideNode(null);
+              }}
+              style={{
+                position: "absolute",
+                top: "15px",
+                right: "15px",
+                background: "rgba(255,255,255,0.05)",
+                border: "none",
+                color: "white",
+                cursor: "pointer",
+                padding: "6px",
+                borderRadius: "50%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <X size={16} />
+            </button>
+
+            <div style={{ marginTop: "10px" }}>
+              <span style={{ fontSize: "0.6rem", color: "var(--accent)", fontWeight: 800, letterSpacing: "1.5px" }}>
+                {selectedSideNode.type?.toUpperCase()} DETAILS
+              </span>
+              <h4 style={{ color: "white", fontSize: "1.2rem", marginTop: "4px", fontWeight: 700, lineHeight: 1.2 }}>
+                {selectedSideNode.name}
+              </h4>
+            </div>
+
+            {selectedSideNode.summary && (
+              <div>
+                <span style={{ fontSize: "0.6rem", color: "var(--accent)", opacity: 0.8, fontWeight: 700 }}>SUMMARY</span>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem", lineHeight: "1.5", marginTop: "6px" }}>
+                  {selectedSideNode.summary}
+                </p>
+              </div>
+            )}
+
+            {selectedSideNode.contentSnippet && (
+              <div>
+                <span style={{ fontSize: "0.6rem", color: "var(--accent)", opacity: 0.8, fontWeight: 700 }}>CONTENT</span>
+                <div style={{ 
+                  background: "rgba(255,255,255,0.03)", 
+                  padding: "16px", 
+                  borderRadius: "12px", 
+                  border: "1px solid var(--glass-border)",
+                  marginTop: "8px"
+                }}>
+                  {isUrl(selectedSideNode.contentSnippet) ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <a 
+                        href={selectedSideNode.contentSnippet} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        style={{
+                          background: "var(--accent)",
+                          color: "white",
+                          textDecoration: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          padding: "8px 16px",
+                          borderRadius: "8px",
+                          fontWeight: 700,
+                          fontSize: "0.8rem",
+                          width: "fit-content"
+                        }}
+                      >
+                        <ExternalLink size={14} />
+                        Open Link
+                      </a>
+                    </div>
+                  ) : (
+                    <p style={{ color: "white", fontSize: "0.8rem", lineHeight: "1.5", whiteSpace: "pre-wrap" }}>
+                      {selectedSideNode.contentSnippet}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {selectedSideNode.tags && selectedSideNode.tags.length > 0 && (
+              <div>
+                <span style={{ fontSize: "0.6rem", color: "var(--accent)", opacity: 0.8, fontWeight: 700 }}>TAGS</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
+                  {selectedSideNode.tags.map((tag, i) => (
+                    <span 
+                      key={i} 
+                      style={{ 
+                        fontSize: "0.7rem", 
+                        background: "rgba(255, 122, 26, 0.1)", 
+                        padding: "4px 10px", 
+                        borderRadius: "6px",
+                        color: "var(--accent)",
+                        fontWeight: 600
+                      }}
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

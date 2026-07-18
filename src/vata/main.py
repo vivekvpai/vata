@@ -10,12 +10,15 @@ from .services.category_service import (
     create_category_record,
     list_categories_record,
     get_category_record,
+    get_category_summary,
     update_category_record,
     delete_category_record,
     rename_category_record,
     add_asset_to_category_record,
     update_asset_in_record,
     delete_asset_from_record,
+    link_asset_to_category,
+    unlink_asset_from_category,
     ensure_data_dir,
 )
 from .services.ai_service import fetch_ai_suggestions
@@ -100,6 +103,21 @@ async def list_categories():
 @api_router.get("/categories/{category}")
 async def get_category(category: str):
     return get_category_record(category)
+
+
+@api_router.get("/categories/{category}/summary")
+async def get_category_summary_endpoint(category: str):
+    return get_category_summary(category)
+
+
+@api_router.post("/categories/{category}/assets/{asset_id}/link")
+async def link_asset(category: str, asset_id: str):
+    return link_asset_to_category(category, asset_id)
+
+
+@api_router.delete("/categories/{category}/assets/{asset_id}/link")
+async def unlink_asset(category: str, asset_id: str):
+    return unlink_asset_from_category(category, asset_id)
 
 
 @api_router.put("/categories/{category}")

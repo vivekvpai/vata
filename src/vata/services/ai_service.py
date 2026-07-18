@@ -1,12 +1,11 @@
 import json
 from fastapi import HTTPException
 from ..agents import run_agent
-from .category_service import load_category_registry
+from . import storage
 
 async def fetch_ai_suggestions(main_content: str, summary: str | None, tags: list[str]) -> dict:
     """Prepare context and call the Suggestion AI agent."""
-    registry = load_category_registry()
-    existing_categories = list(registry.keys())
+    existing_categories = storage.list_category_ids()
 
     context = f"Main Content: {main_content}\n"
     if summary:

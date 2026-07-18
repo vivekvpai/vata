@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vata-mcp"
+version = "0.1.0"
+description = "Vata as a hosted MCP server: save/get/find plus full CRUD, AI-managed categories"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.0.0",
+    "pymongo>=4.0",
+    "mongomock>=4.0",
+    "python-ulid>=1.1",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+llm = ["litellm"]
+
+[project.scripts]
+vata-mcp = "vata_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vata_mcp"]

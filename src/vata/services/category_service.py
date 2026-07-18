@@ -1,237 +1,335 @@
-import json
-from datetime import datetime, timezone
-from pathlib import Path
+import shutil
+
 from fastapi import HTTPException
 
-DATA_DIR = Path.home() / ".vata" / "data"
-CATEGORY_REGISTRY_FILE = DATA_DIR / "category.json"
+from . import storage
 
 
 def ensure_data_dir() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    storage.ensure_data_dir()
+    storage.rebuild_index()
 
 
-def load_category_registry() -> dict[str, list[str]]:
-    ensure_data_dir()
-    if not CATEGORY_REGISTRY_FILE.exists():
-        return {}
-    with CATEGORY_REGISTRY_FILE.open("r", encoding="utf-8") as file:
-        return json.load(file)
+# --- Internal helpers ---
 
 
-def save_category_registry(registry: dict[str, list[str]]) -> None:
-    ensure_data_dir()
-    with CATEGORY_REGISTRY_FILE.open("w", encoding="utf-8") as file:
-        json.dump(registry, file, indent=2)
-
-
-def build_category_filename(category: str) -> str:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    return f"{category}_{timestamp}.json"
-
-
-def resolve_category_file(category_id: str) -> Path:
-    registry = load_category_registry()
-    
-    # Optional logic: If they pass the base name implicitly, let's strictly rely on the key if we can.
-    # The frontend is going to pass whatever is the Key.
-    if category_id not in registry:
+def _require_category(category_id: str) -> None:
+    if not storage.category_dir(category_id).is_dir():
         raise HTTPException(status_code=404, detail="Category not found")
 
-    file_path = DATA_DIR / f"{category_id}.json"
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Category file not found")
 
-    return file_path
-
-
-def read_json_file(file_path: Path) -> dict:
-    with file_path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+def _require_asset(asset_id: str) -> None:
+    if not storage.asset_path(asset_id).exists():
+        raise HTTPException(status_code=404, detail="Asset not found")
 
 
-def write_json_file(file_path: Path, payload: dict) -> None:
-    ensure_data_dir()
-    with file_path.open("w", encoding="utf-8") as file:
-        json.dump(payload, file, indent=2)
+def _read_meta(category_id: str) -> dict:
+    return storage.read_json(storage.meta_path(category_id))
 
 
-def add_asset_to_category_record(category: str, asset_data: dict) -> dict:
-    file_path = resolve_category_file(category)
-    payload = read_json_file(file_path)
-    
-    if "data" not in payload:
-        payload["data"] = {}
-        
-    # Build an epoch timestamp string
-    asset_id = str(int(datetime.now(timezone.utc).timestamp()))
-    asset_data["created_at"] = datetime.now(timezone.utc).isoformat()
-    asset_data["updated_at"] = asset_data["created_at"]
-    asset_data["id"] = asset_id
-    
-    payload["data"][asset_id] = asset_data
-    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-    
-    write_json_file(file_path, payload)
-    
-    return {
-        "message": "Asset added successfully",
-        "category": category,
-        "asset_id": asset_id
-    }
+def _write_meta(category_id: str, meta: dict) -> None:
+    storage.write_json_atomic(storage.meta_path(category_id), meta)
 
-def create_category_record(category: str, data: dict = None) -> dict:
+
+def _bump_meta_updated(category_id: str) -> None:
+    meta = _read_meta(category_id)
+    meta["updated_at"] = storage.now_iso()
+    _write_meta(category_id, meta)
+
+
+def _read_asset(asset_id: str) -> dict:
+    return storage.read_json(storage.asset_path(asset_id))
+
+
+def _write_asset(asset_id: str, payload: dict) -> None:
+    storage.write_json_atomic(storage.asset_path(asset_id), payload)
+
+
+def _asset_categories(asset_id: str) -> list[str]:
+    cats = []
+    for cid in storage.list_category_ids():
+        if asset_id in storage.read_members(cid):
+            cats.append(cid)
+    return cats
+
+
+def _add_member(category_id: str, asset_id: str) -> None:
+    members = storage.read_members(category_id)
+    if asset_id not in members:
+        members.append(asset_id)
+        storage.write_members(category_id, members)
+
+
+def _remove_member(category_id: str, asset_id: str) -> None:
+    members = storage.read_members(category_id)
+    if asset_id in members:
+        members = [m for m in members if m != asset_id]
+        storage.write_members(category_id, members)
+
+
+# --- Categories ---
+
+
+def create_category_record(category: str, data: dict | None = None) -> dict:
     if not category:
         raise HTTPException(status_code=400, detail="Category cannot be empty")
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    category_id = f"{category}_{timestamp}"
-    filename_on_disk = f"{category_id}.json"
-    
-    now = datetime.now(timezone.utc).isoformat()
-    payload = {
-        "category": category, # base name
+    category_id = storage.new_category_id(category)
+    storage.ensure_category_dir(category_id)
+
+    now = storage.now_iso()
+    _write_meta(category_id, {
+        "category": category,
+        "category_id": category_id,
         "created_at": now,
         "updated_at": now,
-        "data": data or {},
-    }
+    })
+    storage.write_members(category_id, [])
 
-    write_json_file(DATA_DIR / filename_on_disk, payload)
-
-    registry = load_category_registry()
-    # K: ID (angular_1234), V: base_name.json (angular.json)
-    registry[category_id] = f"{category}.json"
-    save_category_registry(registry)
+    if data:
+        for asset in data.values():
+            add_asset_to_category_record(category_id, asset)
 
     return {
         "message": "Category file created",
         "category_id": category_id,
-        "filename": filename_on_disk,
+        "filename": "meta.json",
     }
 
 
 def list_categories_record() -> dict:
-    return load_category_registry()
+    return {cid: None for cid in storage.list_category_ids()}
 
 
 def get_category_record(category: str) -> dict:
-    file_path = resolve_category_file(category)
+    _require_category(category)
+    meta = _read_meta(category)
+
+    assets: dict[str, dict] = {}
+    for aid in storage.read_members(category):
+        path = storage.asset_path(aid)
+        if path.exists():
+            assets[aid] = storage.read_json(path)
+
     return {
-        "category": category,
-        "filename": file_path.name,
-        "content": read_json_file(file_path),
+        "category": meta.get("category", category),
+        "filename": "meta.json",
+        "content": {
+            "category": meta.get("category", category),
+            "created_at": meta.get("created_at"),
+            "updated_at": meta.get("updated_at"),
+            "data": assets,
+        },
     }
 
 
-    write_json_file(file_path, payload)
- 
+def get_category_summary(category: str) -> dict:
+    """Fast listing — pulls from index.json, no per-asset reads."""
+    _require_category(category)
+    meta = _read_meta(category)
+    index = storage.load_index()
+
+    items = []
+    for aid in storage.read_members(category):
+        entry = index.get(aid)
+        if not entry:
+            continue
+        items.append({
+            "asset_id": aid,
+            "summary": entry.get("summary", ""),
+            "tags": entry.get("tags", []),
+            "content_snippet": entry.get("content_snippet", ""),
+            "updated_at": entry.get("updated_at", ""),
+            "categories": entry.get("categories", []),
+        })
+
+    return {
+        "category": meta.get("category", category),
+        "category_id": category,
+        "count": len(items),
+        "items": items,
+    }
+
+
 def update_category_record(category: str, data: dict) -> dict:
-    file_path = resolve_category_file(category)
-    payload = read_json_file(file_path)
-    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-    payload["data"] = data
-    
-    write_json_file(file_path, payload)
+    """Replace this category's membership wholesale.
+    Asset values in `data` are treated as new assets to create. Existing
+    members are unlinked (assets remain in the global store unless orphaned)."""
+    _require_category(category)
+
+    for aid in list(storage.read_members(category)):
+        unlink_asset_from_category(category, aid)
+
+    written: dict[str, dict] = {}
+    for asset in (data or {}).values():
+        result = add_asset_to_category_record(category, asset)
+        aid = result["asset_id"]
+        written[aid] = _read_asset(aid)
+
+    _bump_meta_updated(category)
+    meta = _read_meta(category)
 
     return {
         "message": "Category file updated",
         "category": category,
-        "filename": file_path.name,
-        "content": payload,
-    }
-
-def update_asset_in_record(category_id: str, asset_id: str, asset_data: dict) -> dict:
-    file_path = resolve_category_file(category_id)
-    payload = read_json_file(file_path)
-    
-    if "data" not in payload:
-        payload["data"] = {}
-        
-    if asset_id not in payload["data"]:
-        raise HTTPException(status_code=404, detail="Asset not found")
-
-    # Update existing asset
-    payload["data"][asset_id].update(asset_data)
-    payload["data"][asset_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
-    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-    
-    write_json_file(file_path, payload)
-    
-    return {
-        "message": "Asset updated successfully",
-        "category_id": category_id,
-        "asset_id": asset_id
-    }
-
-def delete_asset_from_record(category_id: str, asset_id: str) -> dict:
-    file_path = resolve_category_file(category_id)
-    payload = read_json_file(file_path)
-    
-    if "data" not in payload or asset_id not in payload["data"]:
-        raise HTTPException(status_code=404, detail="Asset not found")
-        
-    payload["data"].pop(asset_id)
-    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-    
-    write_json_file(file_path, payload)
-    
-    return {
-        "message": "Asset deleted successfully",
-        "category_id": category_id,
-        "asset_id": asset_id
+        "filename": "meta.json",
+        "content": {
+            "category": meta.get("category", category),
+            "created_at": meta.get("created_at"),
+            "updated_at": meta.get("updated_at"),
+            "data": written,
+        },
     }
 
 
 def delete_category_record(category_id: str) -> dict:
-    registry = load_category_registry()
-    
-    if category_id not in registry:
-        raise HTTPException(status_code=404, detail="Category not found")
-        
-    registry.pop(category_id)
-    
-    file_path = DATA_DIR / f"{category_id}.json"
-    if file_path.exists():
-        file_path.unlink()
+    _require_category(category_id)
 
-    save_category_registry(registry)
+    members = storage.read_members(category_id)
+    shutil.rmtree(storage.category_dir(category_id))
+
+    for aid in members:
+        cats = _asset_categories(aid)
+        if not cats:
+            path = storage.asset_path(aid)
+            if path.exists():
+                path.unlink()
+            storage.remove_index_entry(aid)
+        else:
+            asset = _read_asset(aid)
+            storage.update_index_entry(aid, asset, cats)
 
     return {"message": "Category and associated files deleted", "category_id": category_id}
 
 
 def rename_category_record(old_category_id: str, new_name: str) -> dict:
-    registry = load_category_registry()
-    if old_category_id not in registry:
-        raise HTTPException(status_code=404, detail="Category not found")
-    
+    _require_category(old_category_id)
     if not new_name:
         raise HTTPException(status_code=400, detail="New name cannot be empty")
-        
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-    new_category_id = f"{new_name}_{timestamp}"
 
-    # Remove the old key
-    registry.pop(old_category_id)
-    
-    old_file_path = DATA_DIR / f"{old_category_id}.json"
-    new_file_path = DATA_DIR / f"{new_category_id}.json"
-    
-    if old_file_path.exists():
-        # Update the payload's internal "category" reference too
-        payload = read_json_file(old_file_path)
-        payload["category"] = new_name
-        write_json_file(old_file_path, payload)
-        
-        # Rename physical file
-        old_file_path.rename(new_file_path)
-            
-    # Add new key-value per user request
-    registry[new_category_id] = f"{new_name}.json"
-        
-    save_category_registry(registry)
+    new_category_id = storage.new_category_id(new_name)
+    new_dir = storage.category_dir(new_category_id)
+    if new_dir.exists():
+        raise HTTPException(status_code=409, detail="Target category id already exists")
+
+    storage.category_dir(old_category_id).rename(new_dir)
+
+    meta = _read_meta(new_category_id)
+    meta["category"] = new_name
+    meta["category_id"] = new_category_id
+    meta["updated_at"] = storage.now_iso()
+    _write_meta(new_category_id, meta)
+
+    members = storage.read_members(new_category_id)
+    for aid in members:
+        path = storage.asset_path(aid)
+        if not path.exists():
+            continue
+        asset = storage.read_json(path)
+        storage.update_index_entry(aid, asset, _asset_categories(aid))
 
     return {
         "message": "Category renamed",
         "old_id": old_category_id,
-        "new_id": new_category_id
+        "new_id": new_category_id,
+    }
+
+
+# --- Assets ---
+
+
+def add_asset_to_category_record(category: str, asset_data: dict) -> dict:
+    _require_category(category)
+
+    asset_id = storage.new_asset_id()
+    now = storage.now_iso()
+    asset_data = {**asset_data, "id": asset_id, "created_at": now, "updated_at": now}
+    _write_asset(asset_id, asset_data)
+    _add_member(category, asset_id)
+    _bump_meta_updated(category)
+    storage.update_index_entry(asset_id, asset_data, _asset_categories(asset_id))
+
+    return {
+        "message": "Asset added successfully",
+        "category": category,
+        "asset_id": asset_id,
+    }
+
+
+def update_asset_in_record(category_id: str, asset_id: str, asset_data: dict) -> dict:
+    _require_category(category_id)
+    _require_asset(asset_id)
+    if asset_id not in storage.read_members(category_id):
+        raise HTTPException(status_code=404, detail="Asset not in this category")
+
+    existing = _read_asset(asset_id)
+    existing.update(asset_data)
+    existing["updated_at"] = storage.now_iso()
+    _write_asset(asset_id, existing)
+    _bump_meta_updated(category_id)
+    storage.update_index_entry(asset_id, existing, _asset_categories(asset_id))
+
+    return {
+        "message": "Asset updated successfully",
+        "category_id": category_id,
+        "asset_id": asset_id,
+    }
+
+
+def delete_asset_from_record(category_id: str, asset_id: str) -> dict:
+    """Unlink from this category. If asset has no other categories, delete it."""
+    _require_category(category_id)
+    _require_asset(asset_id)
+    if asset_id not in storage.read_members(category_id):
+        raise HTTPException(status_code=404, detail="Asset not in this category")
+
+    unlink_asset_from_category(category_id, asset_id)
+    _bump_meta_updated(category_id)
+
+    return {
+        "message": "Asset deleted successfully",
+        "category_id": category_id,
+        "asset_id": asset_id,
+    }
+
+
+# --- Many-to-many ---
+
+
+def link_asset_to_category(category_id: str, asset_id: str) -> dict:
+    _require_category(category_id)
+    _require_asset(asset_id)
+    _add_member(category_id, asset_id)
+    _bump_meta_updated(category_id)
+    asset = _read_asset(asset_id)
+    storage.update_index_entry(asset_id, asset, _asset_categories(asset_id))
+    return {
+        "message": "Asset linked to category",
+        "category_id": category_id,
+        "asset_id": asset_id,
+        "categories": _asset_categories(asset_id),
+    }
+
+
+def unlink_asset_from_category(category_id: str, asset_id: str) -> dict:
+    _require_category(category_id)
+    _require_asset(asset_id)
+    _remove_member(category_id, asset_id)
+
+    cats = _asset_categories(asset_id)
+    if not cats:
+        path = storage.asset_path(asset_id)
+        if path.exists():
+            path.unlink()
+        storage.remove_index_entry(asset_id)
+    else:
+        asset = _read_asset(asset_id)
+        storage.update_index_entry(asset_id, asset, cats)
+
+    return {
+        "message": "Asset unlinked from category",
+        "category_id": category_id,
+        "asset_id": asset_id,
+        "categories": cats,
+        "deleted": not cats,
     }

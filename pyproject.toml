@@ -20,6 +20,7 @@ dependencies = [
     "langchain",
     "langchain-community",
     "langchain-core",
+    "python-ulid",
 ]
 
 [project.scripts]

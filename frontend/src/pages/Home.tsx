@@ -258,59 +258,10 @@ const Home = () => {
                           animate={{ opacity: 1 }}
                           transition={{ delay: 0.2 }}
                         >
-                          <HierarchicalTree data={msg.treeData} />
-                          {msg.showAction && (
-                            <div
-                              style={{
-                                marginTop: "24px",
-                                display: "flex",
-                                gap: "16px",
-                              }}
-                            >
-                              <button
-                                onClick={() => handleSend("Accept this plan.")}
-                                aria-label="Confirm orchestration plan"
-                                style={{
-                                  padding: "10px 24px",
-                                  background: "var(--accent)",
-                                  border: "none",
-                                  borderRadius: "10px",
-                                  color: "white",
-                                  fontWeight: 700,
-                                  cursor: "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "8px",
-                                  transition:
-                                    "background 0.2s ease, transform 0.1s ease",
-                                }}
-                              >
-                                <Check size={18} aria-hidden="true" />
-                                <span>Confirm Plan</span>
-                              </button>
-                              <button
-                                onClick={() => handleSend("Reject this plan.")}
-                                aria-label="Reject orchestration plan"
-                                style={{
-                                  padding: "10px 24px",
-                                  background: "rgba(255, 255, 255, 0.05)",
-                                  border: "1px solid var(--glass-border)",
-                                  borderRadius: "10px",
-                                  color: "var(--text-secondary)",
-                                  fontWeight: 600,
-                                  cursor: "pointer",
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "8px",
-                                  transition:
-                                    "background 0.2s ease, border-color 0.2s ease",
-                                }}
-                              >
-                                <X size={18} aria-hidden="true" />
-                                <span>Reject Plan</span>
-                              </button>
-                            </div>
-                          )}
+                          <HierarchicalTree 
+                            data={msg.treeData} 
+                          />
+
                         </motion.div>
                       )}
 
