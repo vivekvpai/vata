@@ -81,6 +81,16 @@ def _keywords(text: str, top_n: int = 5) -> list[str]:
     return [w for w, _ in counts.most_common(top_n)]
 
 
+def _truncate_words(text: str, max_chars: int) -> str:
+    """Truncate at a word boundary (never mid-word) and add an ellipsis only
+    when something was actually cut."""
+    text = " ".join(text.split())
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars].rsplit(" ", 1)[0]
+    return (cut or text[:max_chars]) + "..."
+
+
 def _heuristic_tags(content: str, user_description: str, existing_tags: list[str] | None) -> list[str]:
     if existing_tags:
         return existing_tags
@@ -88,27 +98,33 @@ def _heuristic_tags(content: str, user_description: str, existing_tags: list[str
 
 
 def _heuristic_title(content: str, user_description: str) -> str:
+    """A short, standalone label — distinct from the description, never a
+    duplicate of the raw hint or the full URL."""
+    if user_description:
+        title = _truncate_words(user_description, 60)
+        return title[0].upper() + title[1:] if title else title
+
     if is_link(content):
         parsed = urlparse(content.strip())
         path_hint = parsed.path.strip("/").split("/")[-1].replace("-", " ").replace("_", " ")
-        if user_description:
-            base = " ".join(user_description.split())[:60]
-            return base
         if path_hint:
-            return f"{parsed.netloc} — {path_hint}"[:80]
-        return parsed.netloc or content[:60]
-    snippet = " ".join(content.split())
-    return snippet[:60] + ("..." if len(snippet) > 60 else "")
+            return _truncate_words(f"{parsed.netloc} — {path_hint}", 80)
+        return parsed.netloc or _truncate_words(content, 60)
+
+    return _truncate_words(content, 60)
 
 
 def _heuristic_description(content: str, user_description: str) -> str:
-    if user_description:
-        text = " ".join(user_description.split())
-        return text[:200] + ("..." if len(text) > 200 else "")
+    """A fuller one-liner distinct from the title — always mentions what the
+    content actually is (a link vs. text), not just a copy of the hint."""
     if is_link(content):
-        return f"Link: {content.strip()}"
-    text = " ".join(content.split())
-    return text[:200] + ("..." if len(text) > 200 else "")
+        link = content.strip()
+        if user_description:
+            return _truncate_words(f"Link to {link} — {user_description}", 200)
+        return f"Link: {link}"
+    if user_description:
+        return _truncate_words(f"{user_description} ({content})", 200)
+    return _truncate_words(content, 200)
 
 
 def _heuristic_category(content: str, user_description: str, tags: list[str]) -> str:
