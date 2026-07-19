@@ -1,7 +1,8 @@
 # vata-mcp
 
-Vata exposed as an MCP server: save/get/find plus full CRUD, with
-categories decided entirely by AI (never a user-facing concept).
+Vata exposed as an MCP server: a personal link/notes archive. Save a link
+or note, AI writes its title/description/tags and decides which category
+it belongs to (never a user-facing concept) — you just save and search.
 
 This branch is MCP-only — the original FastAPI + React app lives on
 `master`. Design docs: [VATA_MCP_PLAN.md](VATA_MCP_PLAN.md),
@@ -99,24 +100,30 @@ VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:
 | `VATA_MCP_PORT` | `8765` | HTTP transport bind port (local only — Render's `PORT` takes priority) |
 | `VATA_MCP_TOKEN` | unset (auth disabled) | Shared bearer token required on every HTTP request |
 
+## Data model
+
+Each asset (a saved link or note) belongs to **exactly one** category —
+there's no many-to-many linking. Deleting a category deletes every asset
+inside it. Assets have: `title` (AI-generated), `content` (the link or raw
+text you gave), `description` (AI one-liner), `tags` (AI list). You can
+always address a specific asset by `asset_id` or by its exact `title`.
+
 ## Tools
 
 | Tool | Slash prompt | Notes |
 |---|---|---|
-| `vata_save` | `/vata-save` | No `category` arg — AI decides, writes a description for new categories |
-| `vata_get` | `/vata-get` | asset_id / category_id / neither |
-| `vata_find` | `/vata-find` | BM25 + optional LLM re-rank |
-| `vata_stats` | `/vata-stats` | Total categories, total assets, server version |
+| `vata_save` | `/vata-save` | `content` (link/text) + optional `description` hint. No `category` arg — AI decides, writes title/description/tags, and a category description if new |
 | `vata_list_categories` | `/vata-list-categories` | Table: category, description, asset count |
+| `vata_list_assets` | `/vata-list-assets` | Table for one category: title, content, description, tags |
+| `vata_find` | `/vata-find` | Search by meaning; returns matching assets **and** the categories they came from, both table-ready |
+| `vata_stats` | `/vata-stats` | Total categories, total assets, server version |
 | `vata_describe` | `/vata-describe` | What Vata is, every tool/prompt, storage/AI/auth config |
-| `vata_suggest` | — | Preview AI decision without saving |
-| `vata_edit_asset` | — | Patch content/summary/tags |
-| `vata_edit_category` | — | Update a category's description |
-| `vata_delete_asset` | — | Requires `confirm: true` |
-| `vata_delete_category` | — | Requires `confirm: true` |
-| `vata_rename_category` | — | Changes name/id; admin/AI maintenance use |
-| `vata_link_asset` / `vata_unlink_asset` | — | Many-to-many membership |
-| `vata_replace_category` | — | Bulk replace |
+| `vata_suggest` | — | Preview AI decision (title/category/description/tags) without saving |
+| `vata_edit_category` | — | Rename and/or edit description; assets move with a rename |
+| `vata_edit_asset` | — | Give `new_content` (+ optional `hint`) to regenerate title/description/tags, or edit by id/title directly |
+| `vata_delete_category` | — | Requires `confirm: true`. Deletes the category **and every asset inside it** |
+| `vata_delete_asset` | — | Requires `confirm: true`. Deletes only that one asset |
+| `vata_replace_category` | — | Bulk replace all assets in a category |
 
 ## Project structure
 
@@ -124,10 +131,10 @@ VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:
 src/vata_mcp/
   server.py              MCP server: tool + prompt registration
   services/
-    storage.py           Mongo/mongomock data access
-    category_service.py  Category/asset CRUD, many-to-many linking
+    storage.py           Mongo/mongomock data access (one category per asset)
+    category_service.py  Category/asset CRUD, id-or-name/title resolution
     decision_service.py  BM25 + optional LLM re-rank search
-    ai_service.py        AI category/summary/tag decisions
+    ai_service.py         AI title/category/description/tag decisions
 scripts/
   smoke_test.py          End-to-end test against the dummy DB
 ```
@@ -138,5 +145,6 @@ scripts/
 ./venv/Scripts/python scripts/smoke_test.py
 ```
 
-Exercises save → find → get → edit → link/unlink → delete end to end
-against the in-memory dummy DB, with no external services required.
+Exercises save → list-categories → list-assets → edit-category → find →
+edit-asset → delete-asset → delete-category (cascading) → describe, end to
+end, against the in-memory dummy DB with no external services required.

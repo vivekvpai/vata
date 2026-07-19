@@ -63,9 +63,10 @@ def bm25_score(documents: list[list[str]], query_tokens: list[str]) -> list[floa
 
 def _asset_doc_text(asset: dict) -> str:
     return " ".join([
-        asset.get("summary", "") or "",
+        asset.get("title", "") or "",
+        asset.get("description", "") or "",
         " ".join(asset.get("tags", []) or []),
-        (asset.get("main_content", "") or "")[:500],
+        (asset.get("content", "") or "")[:500],
     ])
 
 
@@ -103,7 +104,7 @@ def evaluate_nodes_for_query(query: str) -> dict:
     query_tokens = _tokenize(query)
     categories = storage.list_categories()
     if not categories:
-        return {"message": "Decision generated", "count": 0, "data": []}
+        return {"message": "Decision generated", "count": 0, "assets": [], "categories": []}
 
     # --- Pass 1: rank categories via aggregated BM25 over their members ---
     cat_docs: list[list[str]] = []
@@ -112,14 +113,11 @@ def evaluate_nodes_for_query(query: str) -> dict:
 
     for cat in categories:
         cid = cat["_id"]
-        member_ids = storage.members_of_category(cid)
-        if not member_ids:
+        members = storage.list_assets_in_category(cid)
+        if not members:
             continue
         agg_parts, all_tags = [], []
-        for aid in member_ids:
-            asset = storage.get_asset(aid)
-            if not asset:
-                continue
+        for asset in members:
             agg_parts.append(_asset_doc_text(asset))
             all_tags.extend(asset.get("tags", []) or [])
 
@@ -134,7 +132,7 @@ def evaluate_nodes_for_query(query: str) -> dict:
         })
 
     if not cat_overviews:
-        return {"message": "Decision generated", "count": 0, "data": []}
+        return {"message": "Decision generated", "count": 0, "assets": [], "categories": []}
 
     cat_scores = bm25_score(cat_docs, query_tokens)
     ranked = sorted(zip(cat_ids, cat_scores), key=lambda x: x[1], reverse=True)
@@ -164,7 +162,7 @@ def evaluate_nodes_for_query(query: str) -> dict:
         relevant_category_ids = bm25_top  # BM25-only: trust the ranking as-is
 
     if not relevant_category_ids:
-        return {"message": "Decision generated", "count": 0, "data": []}
+        return {"message": "Decision generated", "count": 0, "assets": [], "categories": []}
 
     # --- Pass 2: BM25-rank assets within relevant categories ---
     results: list[dict] = []
@@ -174,16 +172,10 @@ def evaluate_nodes_for_query(query: str) -> dict:
         if not cat:
             continue
         category_name = cat["category"]
-        member_ids = storage.members_of_category(cid)
+        members = storage.list_assets_in_category(cid)
 
-        entries = []
-        docs = []
-        for aid in member_ids:
-            asset = storage.get_asset(aid)
-            if not asset:
-                continue
-            entries.append((aid, asset))
-            docs.append(_tokenize(_asset_doc_text(asset)))
+        entries = [(a["_id"], a) for a in members]
+        docs = [_tokenize(_asset_doc_text(a)) for a in members]
 
         scores = bm25_score(docs, query_tokens)
         scored = sorted(zip(entries, scores), key=lambda x: x[1], reverse=True)
@@ -194,9 +186,10 @@ def evaluate_nodes_for_query(query: str) -> dict:
         chunk = [{
             "asset_id": aid,
             "category": category_name,
-            "summary": asset.get("summary", ""),
+            "title": asset.get("title", ""),
+            "description": asset.get("description", ""),
             "tags": asset.get("tags", []),
-            "content_snippet": (asset.get("main_content", "") or "")[:200],
+            "content": asset.get("content", ""),
         } for aid, asset, _ in top]
 
         if _LLM_MODEL:
@@ -225,4 +218,25 @@ def evaluate_nodes_for_query(query: str) -> dict:
         for node in chunk:
             results.append({**node, "category_id": cid, "match_reason": "keyword match"})
 
-    return {"message": "Decision generated", "count": len(results), "data": results}
+    matched_categories = []
+    seen_cids = set()
+    for r in results:
+        cid = r["category_id"]
+        if cid in seen_cids:
+            continue
+        seen_cids.add(cid)
+        cat = storage.get_category(cid)
+        if cat:
+            matched_categories.append({
+                "category_id": cid,
+                "category": cat["category"],
+                "description": cat.get("description", ""),
+                "match_count": sum(1 for r2 in results if r2["category_id"] == cid),
+            })
+
+    return {
+        "message": "Decision generated",
+        "count": len(results),
+        "assets": results,
+        "categories": matched_categories,
+    }

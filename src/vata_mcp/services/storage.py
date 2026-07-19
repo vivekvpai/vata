@@ -4,6 +4,10 @@ Uses a real `pymongo.MongoClient` when `VATA_MONGODB_URI` is set, otherwise
 falls back to an in-memory `mongomock` client so the whole stack runs with
 zero external services during local development. Swapping to real MongoDB
 Atlas later is just setting the env var — no code changes needed.
+
+Each asset belongs to exactly one category (`category_id` on the asset
+document) — no many-to-many join collection. Deleting a category always
+deletes its assets too.
 """
 
 import os
@@ -35,14 +39,14 @@ def backend_info() -> dict:
         "persistent": _USING_REAL_MONGODB,
     }
 
+
 _db = _client[_DB_NAME]
 
 assets_col = _db["assets"]
 categories_col = _db["categories"]
-members_col = _db["category_members"]
 
-members_col.create_index([("category_id", 1), ("asset_id", 1)], unique=True)
-members_col.create_index("asset_id")
+assets_col.create_index("category_id")
+assets_col.create_index("title")
 categories_col.create_index("category")
 
 
@@ -95,11 +99,12 @@ def touch_category(category_id: str) -> None:
     categories_col.update_one({"_id": category_id}, {"$set": {"updated_at": now_iso()}})
 
 
-def update_category_description(category_id: str, description: str) -> None:
-    categories_col.update_one(
-        {"_id": category_id},
-        {"$set": {"description": description, "updated_at": now_iso()}},
-    )
+def update_category_fields(category_id: str, fields: dict) -> None:
+    patch = {k: v for k, v in fields.items() if v is not None}
+    if not patch:
+        return
+    patch["updated_at"] = now_iso()
+    categories_col.update_one({"_id": category_id}, {"$set": patch})
 
 
 def count_categories() -> int:
@@ -119,7 +124,7 @@ def rename_category(category_id: str, new_id: str, new_name: str) -> None:
     doc["updated_at"] = now_iso()
     categories_col.delete_one({"_id": category_id})
     categories_col.insert_one(doc)
-    members_col.update_many({"category_id": category_id}, {"$set": {"category_id": new_id}})
+    assets_col.update_many({"category_id": category_id}, {"$set": {"category_id": new_id}})
 
 
 def delete_category(category_id: str) -> None:
@@ -129,12 +134,21 @@ def delete_category(category_id: str) -> None:
 # --- Assets ---
 
 
-def insert_asset(asset_id: str, main_content: str, summary: str, tags: list[str]) -> dict:
+def insert_asset(
+    asset_id: str,
+    category_id: str,
+    title: str,
+    content: str,
+    description: str,
+    tags: list[str],
+) -> dict:
     now = now_iso()
     doc = {
         "_id": asset_id,
-        "main_content": main_content,
-        "summary": summary or "",
+        "category_id": category_id,
+        "title": title or "",
+        "content": content,
+        "description": description or "",
         "tags": sorted({t.strip().lower() for t in (tags or []) if t.strip()}),
         "created_at": now,
         "updated_at": now,
@@ -147,13 +161,19 @@ def get_asset(asset_id: str) -> dict | None:
     return assets_col.find_one({"_id": asset_id})
 
 
+def find_asset_by_title(title: str) -> dict | None:
+    return assets_col.find_one({"title": {"$regex": f"^{title}$", "$options": "i"}})
+
+
 def update_asset(asset_id: str, fields: dict) -> dict | None:
     patch = {}
-    if "main_content" in fields and fields["main_content"] is not None:
-        patch["main_content"] = fields["main_content"]
-    if "summary" in fields and fields["summary"] is not None:
-        patch["summary"] = fields["summary"]
-    if "tags" in fields and fields["tags"] is not None:
+    if fields.get("title") is not None:
+        patch["title"] = fields["title"]
+    if fields.get("content") is not None:
+        patch["content"] = fields["content"]
+    if fields.get("description") is not None:
+        patch["description"] = fields["description"]
+    if fields.get("tags") is not None:
         patch["tags"] = sorted({t.strip().lower() for t in fields["tags"] if t.strip()})
     if not patch:
         return get_asset(asset_id)
@@ -162,42 +182,27 @@ def update_asset(asset_id: str, fields: dict) -> dict | None:
     return get_asset(asset_id)
 
 
+def move_asset_category(asset_id: str, new_category_id: str) -> None:
+    assets_col.update_one({"_id": asset_id}, {"$set": {"category_id": new_category_id, "updated_at": now_iso()}})
+
+
 def delete_asset(asset_id: str) -> None:
     assets_col.delete_one({"_id": asset_id})
+
+
+def delete_assets_in_category(category_id: str) -> list[str]:
+    ids = [a["_id"] for a in assets_col.find({"category_id": category_id}, {"_id": 1})]
+    assets_col.delete_many({"category_id": category_id})
+    return ids
 
 
 def list_all_assets() -> list[dict]:
     return list(assets_col.find({}))
 
 
-# --- Membership (many-to-many) ---
+def list_assets_in_category(category_id: str) -> list[dict]:
+    return list(assets_col.find({"category_id": category_id}))
 
 
-def add_member(category_id: str, asset_id: str) -> None:
-    members_col.update_one(
-        {"category_id": category_id, "asset_id": asset_id},
-        {"$setOnInsert": {"category_id": category_id, "asset_id": asset_id}},
-        upsert=True,
-    )
-
-
-def remove_member(category_id: str, asset_id: str) -> None:
-    members_col.delete_one({"category_id": category_id, "asset_id": asset_id})
-
-
-def categories_for_asset(asset_id: str) -> list[str]:
-    return [m["category_id"] for m in members_col.find({"asset_id": asset_id})]
-
-
-def members_of_category(category_id: str) -> list[str]:
-    return [m["asset_id"] for m in members_col.find({"category_id": category_id})]
-
-
-def remove_all_members_of_category(category_id: str) -> list[str]:
-    asset_ids = members_of_category(category_id)
-    members_col.delete_many({"category_id": category_id})
-    return asset_ids
-
-
-def remove_all_members_of_asset(asset_id: str) -> None:
-    members_col.delete_many({"asset_id": asset_id})
+def count_assets_in_category(category_id: str) -> int:
+    return assets_col.count_documents({"category_id": category_id})

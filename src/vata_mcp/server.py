@@ -1,10 +1,14 @@
 """Vata MCP server.
 
-Exposes the full Vata operation set as MCP tools, plus slash prompts
-(`vata-save`, `vata-get`, `vata-find`, `vata-stats`, `vata-list-categories`,
-`vata-describe`) for the common path. Categories are fully AI-managed:
-`vata_save` never takes a category argument, and new categories get an
-AI-written description alongside the name.
+A personal link/notes archive exposed as MCP tools + slash prompts:
+`vata-save`, `vata-list-categories`, `vata-list-assets`, `vata-edit-category`,
+`vata-edit-asset`, `vata-delete-category`, `vata-delete-asset`, `vata-find`,
+`vata-describe`, `vata-stats`.
+
+Categories are fully AI-managed: `vata_save` never takes a category
+argument. Each asset belongs to exactly one category — deleting a category
+deletes its assets too. Assets are addressable by id or by their
+AI-generated title.
 
 Run locally (dummy in-memory Mongo, heuristic AI, no external services):
     python -m vata_mcp.server
@@ -40,69 +44,76 @@ def _error(exc: Exception) -> dict:
 
 @mcp.tool
 async def vata_save(
-    content: Annotated[str, Field(description="The raw content to save.")],
-    summary: Annotated[str | None, Field(description="Optional summary override. AI generates one if omitted.")] = None,
+    content: Annotated[str, Field(description="A link (URL) or freeform text to save.")],
+    description: Annotated[
+        str | None,
+        Field(description="Optional hint about the content — why you're saving it, what it's about. AI uses this plus the content to write the title/description/tags/category."),
+    ] = None,
     tags: Annotated[list[str] | None, Field(description="Optional tag list override. AI generates tags if omitted.")] = None,
 ) -> dict:
-    """Save content to Vata. The category is decided entirely by AI —
-    never pass a category. AI reuses an existing category if the content
-    fits, or creates a new one automatically, with an AI-written description."""
-    decision = await ai_service.decide_category_and_metadata(content, summary, tags)
+    """Save a link or note to Vata. Never pass a category — AI decides
+    which existing category it belongs to, or creates a new one (with an
+    AI-written description) automatically. AI also generates a title and a
+    one-sentence description of the content itself."""
+    decision = await ai_service.decide_asset_metadata(content, description, tags)
     category_doc = category_service.resolve_or_create_category(
         decision["category"], decision.get("category_description", "")
     )
     result = category_service.add_asset_to_category_record(
-        category_doc["_id"], content, decision["summary"], decision["tags"]
+        category_doc["_id"], decision["title"], content, decision["description"], decision["tags"]
     )
     return {
         "message": "Saved",
         "asset_id": result["asset_id"],
+        "title": decision["title"],
         "category_id": category_doc["_id"],
         "category": category_doc["category"],
-        "summary": decision["summary"],
+        "description": decision["description"],
         "tags": decision["tags"],
+        "is_link": decision["is_link"],
     }
 
 
 @mcp.tool
-async def vata_get(
-    asset_id: Annotated[str | None, Field(description="Fetch one specific asset by id.")] = None,
-    category_id: Annotated[str | None, Field(description="List summaries of assets in one category.")] = None,
+async def vata_list_categories() -> dict:
+    """List every category with its name, AI-written description, and
+    asset count. Present this as a table: Category | Description | Assets."""
+    return category_service.list_categories_record()
+
+
+@mcp.tool
+async def vata_list_assets(
+    category_id: Annotated[str | None, Field(description="Category to list assets from, by id.")] = None,
+    category_name: Annotated[str | None, Field(description="Category to list assets from, by exact name (used if category_id omitted).")] = None,
 ) -> dict:
-    """Retrieve saved content. No args -> list all categories (use
-    vata_list_categories for a dedicated table view instead). category_id
-    only -> summaries of everything in it, table-ready (name, summary,
-    count). asset_id -> full content of one asset. Prefer vata_find for
-    retrieval by meaning rather than by id."""
+    """List every asset within one category. Present as a table: Title |
+    Content (link/text) | Description | Tags."""
     try:
-        if asset_id:
-            return category_service.get_asset_record(asset_id)
-        if category_id:
-            return category_service.get_category_summary(category_id)
-        return category_service.list_categories_record()
+        return category_service.list_assets_in_category_record(category_id, category_name)
     except VataNotFoundError as e:
         return _error(e)
 
 
 @mcp.tool
 async def vata_find(
-    query: Annotated[str, Field(description="Natural-language search query.")],
+    query: Annotated[str, Field(description="Natural-language search query — what you're looking for.")],
 ) -> dict:
     """Search saved content by meaning. Ranks categories then assets via
     BM25, with an optional LLM re-rank pass for match reasons when an LLM
-    is configured. This is the primary retrieval tool."""
+    is configured. Returns both the matching assets and the categories they
+    came from — present both as tables."""
     return decision_service.evaluate_nodes_for_query(query)
 
 
 @mcp.tool
 async def vata_suggest(
     content: Annotated[str, Field(description="Content to preview AI filing decisions for, without saving.")],
-    summary: Annotated[str | None, Field(description="Optional summary override.")] = None,
+    description: Annotated[str | None, Field(description="Optional hint about the content.")] = None,
     tags: Annotated[list[str] | None, Field(description="Optional tag override.")] = None,
 ) -> dict:
-    """Preview what vata_save would decide (category/summary/tags) without
-    writing anything. Useful for transparency/debugging."""
-    return await ai_service.fetch_suggestions(content, summary, tags)
+    """Preview what vata_save would decide (title/category/description/tags)
+    without writing anything. Useful for transparency/debugging."""
+    return await ai_service.fetch_suggestions(content, description, tags)
 
 
 @mcp.tool
@@ -122,12 +133,12 @@ async def vata_describe() -> dict:
     return {
         "name": "Vata MCP",
         "description": (
-            "A personal knowledge store exposed as MCP tools/prompts. Save "
-            "arbitrary content with vata_save — AI decides which category it "
-            "belongs to (creating one with a written description if none "
-            "fits) so you never manage categories by hand. Retrieve by "
-            "meaning with vata_find, by id with vata_get, or browse "
-            "everything with vata_list_categories/vata_stats."
+            "A personal link/notes archive exposed as MCP tools/prompts. Save "
+            "a link or note with vata_save — AI writes a title, description, "
+            "tags, and decides which category it belongs to (creating one "
+            "with a written description if none fits), so you never manage "
+            "categories or metadata by hand. Retrieve by meaning with "
+            "vata_find, or browse with vata_list_categories/vata_list_assets."
         ),
         "version": category_service.VATA_MCP_VERSION,
         "tools": sorted(t.name for t in tools),
@@ -138,108 +149,78 @@ async def vata_describe() -> dict:
     }
 
 
-@mcp.tool
-async def vata_list_categories() -> dict:
-    """List every category with its name, AI-written description, and
-    asset count. Present this as a table: Category | Description | Assets."""
-    return category_service.list_categories_record()
-
-
-# --- Tools: edit / delete / link (tool-only, no slash prompt) ---
+# --- Tools: edit / delete (tool-only, no slash prompt except where noted) ---
 
 
 @mcp.tool
-async def vata_edit_asset(
-    asset_id: Annotated[str, Field(description="Asset to edit.")],
-    category_id: Annotated[str, Field(description="One category this asset currently belongs to.")],
-    main_content: Annotated[str | None, Field(description="New content, if changing.")] = None,
-    summary: Annotated[str | None, Field(description="New summary, if changing.")] = None,
-    tags: Annotated[list[str] | None, Field(description="New tag list, if changing.")] = None,
+async def vata_edit_category(
+    category_id: Annotated[str | None, Field(description="Category to edit, by id.")] = None,
+    current_name: Annotated[str | None, Field(description="Category to edit, by its current exact name (used if category_id omitted).")] = None,
+    new_name: Annotated[str | None, Field(description="New name, if renaming.")] = None,
+    description: Annotated[str | None, Field(description="New description. If omitted while renaming, AI should generate one and pass it here.")] = None,
 ) -> dict:
-    """Patch an existing asset's content/summary/tags."""
+    """Edit a category's name and/or description. Provide the category by
+    id or current_name, and at least one of new_name/description to change."""
     try:
-        return category_service.update_asset_in_record(
-            category_id, asset_id, {"main_content": main_content, "summary": summary, "tags": tags}
-        )
-    except VataNotFoundError as e:
+        return category_service.edit_category_record(category_id, current_name, new_name, description)
+    except (VataNotFoundError, VataConflictError) as e:
         return _error(e)
 
 
 @mcp.tool
-async def vata_delete_asset(
-    category_id: Annotated[str, Field(description="Category the asset belongs to.")],
-    asset_id: Annotated[str, Field(description="Asset to delete.")],
-    confirm: Annotated[Literal[True], Field(description="Must be explicitly true. Destructive action.")],
+async def vata_edit_asset(
+    asset_id: Annotated[str | None, Field(description="Asset to edit, by id.")] = None,
+    title: Annotated[str | None, Field(description="Asset to edit, by its current exact title (used if asset_id omitted).")] = None,
+    new_content: Annotated[str | None, Field(description="New link or text content, if changing.")] = None,
+    hint: Annotated[
+        str | None,
+        Field(description="A hint about the new content, if changing it — AI uses this plus new_content to regenerate title/description/tags."),
+    ] = None,
 ) -> dict:
-    """Delete an asset. Unlinks it from category_id; if that was its only
-    category, the asset is hard-deleted entirely. Requires confirm=true."""
+    """Edit an existing asset. Look it up by asset_id or title. If
+    new_content is given, AI regenerates the title, description, and tags
+    for it (using `hint` as guidance) and stores the full new asset."""
     try:
-        return category_service.delete_asset_from_record(category_id, asset_id)
+        if new_content is not None:
+            decision = await ai_service.decide_asset_metadata(new_content, hint, None)
+            return category_service.update_asset_record(
+                asset_id,
+                title,
+                {
+                    "title": decision["title"],
+                    "content": new_content,
+                    "description": decision["description"],
+                    "tags": decision["tags"],
+                },
+            )
+        return category_service.update_asset_record(asset_id, title, {})
     except VataNotFoundError as e:
         return _error(e)
 
 
 @mcp.tool
 async def vata_delete_category(
-    category_id: Annotated[str, Field(description="Category to delete.")],
+    confirm: Annotated[Literal[True], Field(description="Must be explicitly true. Destructive — deletes the category AND every asset inside it.")],
+    category_id: Annotated[str | None, Field(description="Category to delete, by id.")] = None,
+    category_name: Annotated[str | None, Field(description="Category to delete, by exact name (used if category_id omitted).")] = None,
+) -> dict:
+    """Delete a category and every asset within it. Requires confirm=true."""
+    try:
+        return category_service.delete_category_record(category_id, category_name)
+    except VataNotFoundError as e:
+        return _error(e)
+
+
+@mcp.tool
+async def vata_delete_asset(
     confirm: Annotated[Literal[True], Field(description="Must be explicitly true. Destructive action.")],
+    asset_id: Annotated[str | None, Field(description="Asset to delete, by id.")] = None,
+    title: Annotated[str | None, Field(description="Asset to delete, by its exact title (used if asset_id omitted).")] = None,
 ) -> dict:
-    """Delete a category. Any assets with no other category membership are
-    hard-deleted too. Requires confirm=true."""
+    """Delete a single asset (its category is unaffected). Requires
+    confirm=true."""
     try:
-        return category_service.delete_category_record(category_id)
-    except VataNotFoundError as e:
-        return _error(e)
-
-
-@mcp.tool
-async def vata_rename_category(
-    category_id: Annotated[str, Field(description="Category to rename.")],
-    new_name: Annotated[str, Field(description="New human-readable name.")],
-) -> dict:
-    """Rename a category. This changes its category_id (IDs are derived
-    from name + timestamp). Mostly for AI/admin use to consolidate
-    near-duplicate auto-created categories."""
-    try:
-        return category_service.rename_category_record(category_id, new_name)
-    except (VataNotFoundError, VataConflictError) as e:
-        return _error(e)
-
-
-@mcp.tool
-async def vata_edit_category(
-    category_id: Annotated[str, Field(description="Category whose description will be updated.")],
-    description: Annotated[str, Field(description="New one-sentence description of what belongs in this category.")],
-) -> dict:
-    """Edit a category's description (name changes go through
-    vata_rename_category instead)."""
-    try:
-        return category_service.edit_category_description(category_id, description)
-    except VataNotFoundError as e:
-        return _error(e)
-
-
-@mcp.tool
-async def vata_link_asset(
-    category_id: Annotated[str, Field(description="Category to attach the asset to.")],
-    asset_id: Annotated[str, Field(description="Asset to attach.")],
-) -> dict:
-    """Attach an existing asset to an additional category (many-to-many)."""
-    try:
-        return category_service.link_asset_to_category(category_id, asset_id)
-    except VataNotFoundError as e:
-        return _error(e)
-
-
-@mcp.tool
-async def vata_unlink_asset(
-    category_id: Annotated[str, Field(description="Category to detach the asset from.")],
-    asset_id: Annotated[str, Field(description="Asset to detach.")],
-) -> dict:
-    """Detach an asset from one category without necessarily deleting it —
-    it's hard-deleted only if this was its last remaining category."""
-    try:
-        return category_service.unlink_asset_from_category(category_id, asset_id)
+        return category_service.delete_asset_record(asset_id, title)
     except VataNotFoundError as e:
         return _error(e)
 
@@ -249,10 +230,10 @@ async def vata_replace_category(
     category_id: Annotated[str, Field(description="Category whose contents will be wholesale replaced.")],
     data: Annotated[
         dict,
-        Field(description='Map of arbitrary keys to {"main_content", "summary"?, "tags"?} objects to become the new members.'),
+        Field(description='Map of arbitrary keys to {"title"?, "content", "description"?, "tags"?} objects to become the new assets.'),
     ],
 ) -> dict:
-    """Bulk-replace a category's members: unlinks everything currently in
+    """Bulk-replace a category's assets: deletes everything currently in
     it, then creates new assets from `data`. Rarely used directly; kept for
     parity with bulk-import style flows."""
     try:
@@ -265,46 +246,46 @@ async def vata_replace_category(
 
 
 @mcp.prompt(name="vata-save")
-def vata_save_prompt(content: str) -> str:
-    """Save something to Vata (AI files it under a category automatically)."""
+def vata_save_prompt(content: str, description: str = "") -> str:
+    """Save a link or note to Vata (AI files it under a category automatically)."""
     return (
-        f"Call the vata_save tool with content={content!r}. "
-        "Do not ask the user for a category — the tool decides that on its own. "
-        "Report back the category it was filed under."
+        f"Call the vata_save tool with content={content!r}"
+        + (f" and description={description!r}" if description else "")
+        + ". Do not ask the user for a category — the tool decides that on its own. "
+        "Report back the title it generated and the category it was filed under."
     )
-
-
-@mcp.prompt(name="vata-get")
-def vata_get_prompt(what: str = "") -> str:
-    """Retrieve something previously saved to Vata."""
-    if what:
-        return (
-            f"The user wants to retrieve: {what!r}. "
-            "If this looks like a specific asset id, call vata_get with asset_id. "
-            "If it looks like a category id, call vata_get with category_id and "
-            "present the result's items as a table: Summary | Tags | Updated. "
-            "Otherwise, prefer calling vata_find with this as the query instead, "
-            "since vata_get requires an id and vata_find searches by meaning."
-        )
-    return "Call the vata_list_categories tool and present the result as a table: Category | Description | Assets."
-
-
-@mcp.prompt(name="vata-find")
-def vata_find_prompt(query: str) -> str:
-    """Search everything saved to Vata by meaning."""
-    return f"Call the vata_find tool with query={query!r} and present the ranked results with their match reasons."
-
-
-@mcp.prompt(name="vata-stats")
-def vata_stats_prompt() -> str:
-    """Show Vata's overall metrics: category count, asset count, version."""
-    return "Call the vata_stats tool and report the category count, asset count, and version."
 
 
 @mcp.prompt(name="vata-list-categories")
 def vata_list_categories_prompt() -> str:
     """List all categories in a table: name, description, asset count."""
     return "Call the vata_list_categories tool and present the result as a table: Category | Description | Assets."
+
+
+@mcp.prompt(name="vata-list-assets")
+def vata_list_assets_prompt(category: str) -> str:
+    """List all assets in a category, table: title, link/text, description, tags."""
+    return (
+        f"The user wants assets in category {category!r}. If this looks like a "
+        "category_id, call vata_list_assets with category_id; otherwise call it "
+        "with category_name. Present the result as a table: Title | Content | Description | Tags."
+    )
+
+
+@mcp.prompt(name="vata-find")
+def vata_find_prompt(query: str) -> str:
+    """Search everything saved to Vata by meaning."""
+    return (
+        f"Call the vata_find tool with query={query!r}. Present the results as two "
+        "tables: one for matching assets (Title | Content | Description | Tags | Category | Match reason), "
+        "and one for the categories they came from (Category | Description | Match count)."
+    )
+
+
+@mcp.prompt(name="vata-stats")
+def vata_stats_prompt() -> str:
+    """Show Vata's overall metrics: category count, asset count, version."""
+    return "Call the vata_stats tool and report the category count, asset count, and version."
 
 
 @mcp.prompt(name="vata-describe")

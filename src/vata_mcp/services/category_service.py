@@ -1,8 +1,8 @@
-"""Category/asset CRUD + many-to-many membership. Ported from the original
-vata `category_service.py`, adapted to the Mongo storage layer. Raises
-`VataNotFoundError` / `VataConflictError` instead of FastAPI's
-HTTPException, since this is a standalone MCP server with no web framework
-underneath.
+"""Category/asset CRUD. Each asset belongs to exactly one category
+(`category_id` on the asset document) — no many-to-many join. Deleting a
+category always deletes its assets. Raises `VataNotFoundError` /
+`VataConflictError` instead of FastAPI's HTTPException, since this is a
+standalone MCP server with no web framework underneath.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -37,14 +37,47 @@ def _require_asset(asset_id: str) -> dict:
     return asset
 
 
-def _summary_entry(asset_id: str, asset: dict) -> dict:
+def resolve_asset(asset_id: str | None, title: str | None) -> dict:
+    """Look up an asset by id first, then by title (case-insensitive exact
+    match). At least one of asset_id/title must be given."""
+    if asset_id:
+        asset = storage.get_asset(asset_id)
+        if asset:
+            return asset
+        raise VataNotFoundError(f"Asset not found: {asset_id}")
+    if title:
+        asset = storage.find_asset_by_title(title)
+        if asset:
+            return asset
+        raise VataNotFoundError(f"No asset found with title: {title!r}")
+    raise VataNotFoundError("Must provide asset_id or title")
+
+
+def resolve_category(category_id: str | None, name: str | None) -> dict:
+    """Look up a category by id first, then by exact name."""
+    if category_id:
+        cat = storage.get_category(category_id)
+        if cat:
+            return cat
+        raise VataNotFoundError(f"Category not found: {category_id}")
+    if name:
+        cat = storage.find_category_by_name(name)
+        if cat:
+            return cat
+        raise VataNotFoundError(f"No category found with name: {name!r}")
+    raise VataNotFoundError("Must provide category_id or name")
+
+
+def _asset_row(asset: dict) -> dict:
     return {
-        "asset_id": asset_id,
-        "summary": asset.get("summary", ""),
+        "asset_id": asset["_id"],
+        "title": asset.get("title", ""),
+        "content": asset.get("content", ""),
+        "description": asset.get("description", ""),
         "tags": asset.get("tags", []),
-        "content_snippet": (asset.get("main_content", "") or "")[:200],
+        "category_id": asset.get("category_id", ""),
+        "created_at": asset.get("created_at", ""),
         "updated_at": asset.get("updated_at", ""),
-        "categories": storage.categories_for_asset(asset_id),
     }
 
 
@@ -77,53 +110,76 @@ def list_categories_record() -> dict:
             "category_id": c["_id"],
             "category": c["category"],
             "description": c.get("description", ""),
-            "asset_count": len(storage.members_of_category(c["_id"])),
+            "asset_count": storage.count_assets_in_category(c["_id"]),
         })
     return {"count": len(rows), "categories": rows}
 
 
-def edit_category_description(category_id: str, description: str) -> dict:
-    _require_category(category_id)
-    storage.update_category_description(category_id, description)
-    return {"message": "Category description updated", "category_id": category_id, "description": description}
-
-
-def get_stats() -> dict:
-    return {
-        "categories": storage.count_categories(),
-        "assets": storage.count_assets(),
-        "version": VATA_MCP_VERSION,
-    }
-
-
-def get_category_summary(category_id: str) -> dict:
-    cat = _require_category(category_id)
-    items = []
-    for aid in storage.members_of_category(category_id):
-        asset = storage.get_asset(aid)
-        if asset:
-            items.append(_summary_entry(aid, asset))
+def list_assets_in_category_record(category_id: str | None = None, category_name: str | None = None) -> dict:
+    """Table-style listing of every asset in one category: title, content
+    (link/text), description, tags."""
+    cat = resolve_category(category_id, category_name)
+    assets = storage.list_assets_in_category(cat["_id"])
+    rows = [
+        {
+            "asset_id": a["_id"],
+            "title": a.get("title", ""),
+            "content": a.get("content", ""),
+            "description": a.get("description", ""),
+            "tags": a.get("tags", []),
+        }
+        for a in assets
+    ]
     return {
         "category": cat["category"],
-        "category_id": category_id,
-        "description": cat.get("description", ""),
-        "count": len(items),
-        "items": items,
+        "category_id": cat["_id"],
+        "count": len(rows),
+        "assets": rows,
     }
 
 
-def delete_category_record(category_id: str) -> dict:
-    _require_category(category_id)
-    member_ids = storage.remove_all_members_of_category(category_id)
-    storage.delete_category(category_id)
+def edit_category_record(
+    category_id: str | None,
+    current_name: str | None,
+    new_name: str | None = None,
+    description: str | None = None,
+) -> dict:
+    """Edit a category's name and/or description. Renaming changes the
+    category_id (IDs are name+timestamp derived); assets are moved to the
+    new id automatically."""
+    cat = resolve_category(category_id, current_name)
+    result_id = cat["_id"]
 
-    orphaned = []
-    for aid in member_ids:
-        if not storage.categories_for_asset(aid):
-            storage.delete_asset(aid)
-            orphaned.append(aid)
+    if new_name and new_name != cat["category"]:
+        new_id = storage.new_category_id(new_name)
+        if storage.get_category(new_id):
+            raise VataConflictError("Target category id already exists")
+        storage.rename_category(cat["_id"], new_id, new_name)
+        result_id = new_id
 
-    return {"message": "Category deleted", "category_id": category_id, "orphaned_assets_deleted": orphaned}
+    if description is not None:
+        storage.update_category_fields(result_id, {"description": description})
+
+    updated = storage.get_category(result_id)
+    return {
+        "message": "Category updated",
+        "category_id": result_id,
+        "category": updated["category"],
+        "description": updated.get("description", ""),
+    }
+
+
+def delete_category_record(category_id: str | None = None, category_name: str | None = None) -> dict:
+    """Delete a category and every asset within it."""
+    cat = resolve_category(category_id, category_name)
+    deleted_asset_ids = storage.delete_assets_in_category(cat["_id"])
+    storage.delete_category(cat["_id"])
+    return {
+        "message": "Category and all its assets deleted",
+        "category_id": cat["_id"],
+        "deleted_asset_ids": deleted_asset_ids,
+        "deleted_asset_count": len(deleted_asset_ids),
+    }
 
 
 def rename_category_record(category_id: str, new_name: str) -> dict:
@@ -138,20 +194,23 @@ def rename_category_record(category_id: str, new_name: str) -> dict:
 
 
 def replace_category_record(category_id: str, data: dict) -> dict:
-    """Bulk-replace: unlink all current members, create new assets from `data`."""
+    """Bulk-replace: delete all current assets in the category, create new
+    ones from `data` (each value needs at least "content")."""
     _require_category(category_id)
-    for aid in list(storage.members_of_category(category_id)):
-        unlink_asset_from_category(category_id, aid)
+    storage.delete_assets_in_category(category_id)
 
     written = {}
     for asset_data in (data or {}).values():
-        result = add_asset_to_category_record(
+        asset_id = storage.new_asset_id()
+        doc = storage.insert_asset(
+            asset_id,
             category_id,
-            asset_data.get("main_content", ""),
-            asset_data.get("summary"),
-            asset_data.get("tags"),
+            asset_data.get("title", ""),
+            asset_data.get("content", ""),
+            asset_data.get("description", ""),
+            asset_data.get("tags", []),
         )
-        written[result["asset_id"]] = storage.get_asset(result["asset_id"])
+        written[asset_id] = doc
 
     storage.touch_category(category_id)
     return {"message": "Category replaced", "category_id": category_id, "data": written}
@@ -161,87 +220,37 @@ def replace_category_record(category_id: str, data: dict) -> dict:
 
 
 def add_asset_to_category_record(
-    category_id: str, main_content: str, summary: str | None = None, tags: list[str] | None = None
+    category_id: str, title: str, content: str, description: str | None = None, tags: list[str] | None = None
 ) -> dict:
     _require_category(category_id)
     asset_id = storage.new_asset_id()
-    storage.insert_asset(asset_id, main_content, summary or "", tags or [])
-    storage.add_member(category_id, asset_id)
+    storage.insert_asset(asset_id, category_id, title, content, description or "", tags or [])
     storage.touch_category(category_id)
     return {"message": "Asset added", "category_id": category_id, "asset_id": asset_id}
 
 
-def get_asset_record(asset_id: str) -> dict:
-    asset = _require_asset(asset_id)
+def get_asset_record(asset_id: str | None = None, title: str | None = None) -> dict:
+    asset = resolve_asset(asset_id, title)
+    return _asset_row(asset)
+
+
+def update_asset_record(asset_id: str | None, title: str | None, fields: dict) -> dict:
+    asset = resolve_asset(asset_id, title)
+    storage.update_asset(asset["_id"], fields)
+    storage.touch_category(asset["category_id"])
+    return get_asset_record(asset_id=asset["_id"])
+
+
+def delete_asset_record(asset_id: str | None = None, title: str | None = None) -> dict:
+    asset = resolve_asset(asset_id, title)
+    storage.delete_asset(asset["_id"])
+    storage.touch_category(asset["category_id"])
+    return {"message": "Asset deleted", "asset_id": asset["_id"], "title": asset.get("title", "")}
+
+
+def get_stats() -> dict:
     return {
-        "asset_id": asset_id,
-        "main_content": asset.get("main_content", ""),
-        "summary": asset.get("summary", ""),
-        "tags": asset.get("tags", []),
-        "categories": storage.categories_for_asset(asset_id),
-        "created_at": asset.get("created_at"),
-        "updated_at": asset.get("updated_at"),
-    }
-
-
-def update_asset_in_record(category_id: str, asset_id: str, fields: dict) -> dict:
-    _require_category(category_id)
-    _require_asset(asset_id)
-    if category_id not in storage.categories_for_asset(asset_id):
-        raise VataNotFoundError("Asset not in this category")
-    storage.update_asset(asset_id, fields)
-    storage.touch_category(category_id)
-    return {"message": "Asset updated", "category_id": category_id, "asset_id": asset_id}
-
-
-def delete_asset_from_record(category_id: str, asset_id: str) -> dict:
-    """Unlink from this category. If asset has no other categories, hard-delete it."""
-    _require_category(category_id)
-    _require_asset(asset_id)
-    if category_id not in storage.categories_for_asset(asset_id):
-        raise VataNotFoundError("Asset not in this category")
-
-    result = unlink_asset_from_category(category_id, asset_id)
-    storage.touch_category(category_id)
-    return {
-        "message": "Asset deleted",
-        "category_id": category_id,
-        "asset_id": asset_id,
-        "hard_deleted": result["deleted"],
-    }
-
-
-# --- Many-to-many ---
-
-
-def link_asset_to_category(category_id: str, asset_id: str) -> dict:
-    _require_category(category_id)
-    _require_asset(asset_id)
-    storage.add_member(category_id, asset_id)
-    storage.touch_category(category_id)
-    return {
-        "message": "Asset linked",
-        "category_id": category_id,
-        "asset_id": asset_id,
-        "categories": storage.categories_for_asset(asset_id),
-    }
-
-
-def unlink_asset_from_category(category_id: str, asset_id: str) -> dict:
-    _require_category(category_id)
-    _require_asset(asset_id)
-    storage.remove_member(category_id, asset_id)
-
-    remaining = storage.categories_for_asset(asset_id)
-    deleted = False
-    if not remaining:
-        storage.delete_asset(asset_id)
-        deleted = True
-
-    return {
-        "message": "Asset unlinked",
-        "category_id": category_id,
-        "asset_id": asset_id,
-        "categories": remaining,
-        "deleted": deleted,
+        "categories": storage.count_categories(),
+        "assets": storage.count_assets(),
+        "version": VATA_MCP_VERSION,
     }

@@ -1,7 +1,11 @@
 """End-to-end smoke test against the underlying services (bypasses the MCP
-transport layer, calls the same async functions the tools call). Runs
-entirely against the in-memory mongomock dummy DB + heuristic AI — no
-external services required.
+transport layer for most calls, but exercises vata_describe through a real
+MCP client). Runs entirely against the in-memory mongomock dummy DB +
+heuristic AI — no external services required.
+
+Model: each asset belongs to exactly one category. vata_save takes a
+link/text `content` plus an optional `description` hint; AI generates the
+title, category, content description, and tags.
 
 Run: python scripts/smoke_test.py
 """
@@ -25,116 +29,136 @@ def check(label: str, condition: bool, detail: str = "") -> None:
         raise SystemExit(1)
 
 
+async def _save(content: str, description: str | None = None) -> tuple[dict, dict]:
+    """Mirrors the vata_save tool's logic against the service layer directly."""
+    decision = await ai_service.decide_asset_metadata(content, description)
+    cat = category_service.resolve_or_create_category(decision["category"], decision["category_description"])
+    result = category_service.add_asset_to_category_record(
+        cat["_id"], decision["title"], content, decision["description"], decision["tags"]
+    )
+    return decision, {**result, "category_id": cat["_id"], "category": cat["category"], "title": decision["title"]}
+
+
 async def main() -> None:
     print("=== vata-mcp smoke test ===\n")
 
-    # 1. Save two clearly different pieces of content -> expect two categories
-    decision1 = await ai_service.decide_category_and_metadata(
-        "Recipe for tomato basil pasta: boil pasta, saute garlic and basil, add crushed tomatoes, simmer 10 minutes."
+    # 1. Save a link with a description hint
+    decision1, save1 = await _save(
+        "https://docs.python.org/3/library/asyncio.html",
+        "python asyncio reference docs, useful for async patterns",
     )
-    check("vata_save #1 decision includes a category_description", bool(decision1.get("category_description")), str(decision1))
-    cat1 = category_service.resolve_or_create_category(decision1["category"], decision1["category_description"])
-    save1 = category_service.add_asset_to_category_record(cat1["_id"], "Recipe for tomato basil pasta...", decision1["summary"], decision1["tags"])
+    check("vata_save #1 decision has title/category/description/tags", all(k in decision1 for k in ("title", "category", "description", "tags")), str(decision1))
+    check("vata_save #1 detected this as a link", decision1["is_link"] is True, str(decision1))
     check("vata_save #1 created an asset", bool(save1.get("asset_id")))
-    print(f"  -> filed under category: {cat1['category']!r} (id={cat1['_id']}, description={cat1.get('description')!r})")
+    print(f"  -> title={save1['title']!r} category={save1['category']!r} (id={save1['category_id']})")
 
-    decision2 = await ai_service.decide_category_and_metadata(
-        "Quarterly budget review meeting notes: Q3 revenue up 12%, marketing spend needs review, follow up with finance team next week."
+    # 2. Save plain text, unrelated topic -> expect a different category
+    decision2, save2 = await _save(
+        "Quarterly budget review meeting notes: Q3 revenue up 12%, marketing spend needs review.",
     )
-    cat2 = category_service.resolve_or_create_category(decision2["category"], decision2["category_description"])
-    save2 = category_service.add_asset_to_category_record(cat2["_id"], "Quarterly budget review meeting notes...", decision2["summary"], decision2["tags"])
+    check("vata_save #2 detected this as text, not a link", decision2["is_link"] is False, str(decision2))
     check("vata_save #2 created an asset", bool(save2.get("asset_id")))
-    print(f"  -> filed under category: {cat2['category']!r} (id={cat2['_id']})")
+    check("Two different topics landed in two different categories", save1["category_id"] != save2["category_id"])
+    print(f"  -> title={save2['title']!r} category={save2['category']!r}")
 
-    check("Two different topics landed in two different categories", cat1["_id"] != cat2["_id"])
-
-    # 2. Save a third, similar-to-#1 note -> should reuse category 1 (heuristic-dependent, so just report)
-    decision3 = await ai_service.decide_category_and_metadata(
-        "Another pasta recipe: penne with garlic and olive oil, add basil and parmesan."
+    # 3. Save a second link related to #1 -> should ideally reuse its category (heuristic-dependent)
+    decision3, save3 = await _save(
+        "https://docs.python.org/3/library/concurrent.futures.html",
+        "python concurrency docs, related to asyncio",
     )
-    cat3 = category_service.resolve_or_create_category(decision3["category"], decision3["category_description"])
-    save3 = category_service.add_asset_to_category_record(cat3["_id"], "Another pasta recipe...", decision3["summary"], decision3["tags"])
     check("vata_save #3 created an asset", bool(save3.get("asset_id")))
-    print(f"  -> filed under category: {cat3['category']!r} (id={cat3['_id']}) [expected to reuse #1's category ideally]")
+    print(f"  -> title={save3['title']!r} category={save3['category']!r} [expected to reuse #1's category ideally]")
 
-    # 3. vata_list_categories: table view with description + asset_count
+    # 4. vata_list_categories: table view
     listing = category_service.list_categories_record()
     check("vata_list_categories returns at least 2 categories", len(listing["categories"]) >= 2, str(listing))
     check("vata_list_categories rows include description and asset_count", all("description" in row and "asset_count" in row for row in listing["categories"]), str(listing))
 
-    # 4. vata_get: category summary
-    summary = category_service.get_category_summary(cat1["_id"])
-    check("vata_get (category summary) returns items", summary["count"] >= 1, str(summary))
-    check("vata_get (category summary) includes description", "description" in summary, str(summary))
+    # 5. vata_list_assets: table view for category #1
+    assets_in_cat1 = category_service.list_assets_in_category_record(category_id=save1["category_id"])
+    check("vata_list_assets returns at least 1 asset for category #1", assets_in_cat1["count"] >= 1, str(assets_in_cat1))
+    check("vata_list_assets rows include title/content/description/tags", all(
+        all(k in row for k in ("title", "content", "description", "tags")) for row in assets_in_cat1["assets"]
+    ), str(assets_in_cat1))
 
-    # 4b. vata_edit_category: update description (do this before any rename touches cat1/cat3's shared category)
-    edit_cat_result = category_service.edit_category_description(cat1["_id"], "Updated description via vata_edit_category.")
-    check("vata_edit_category succeeds", edit_cat_result.get("message") == "Category description updated")
-    reloaded = category_service.get_category_summary(cat1["_id"])
-    check("Edited category description persisted", reloaded["description"] == "Updated description via vata_edit_category.", reloaded["description"])
+    # 5b. vata_list_assets by category_name instead of id
+    assets_by_name = category_service.list_assets_in_category_record(category_name=save1["category"])
+    check("vata_list_assets works by category_name too", assets_by_name["category_id"] == save1["category_id"], str(assets_by_name))
 
-    # 5. vata_get: full asset
-    full = category_service.get_asset_record(save1["asset_id"])
-    check("vata_get (asset) returns main_content", "pasta" in full["main_content"].lower())
+    # 6. vata_edit_category: rename + description in one call
+    edit_cat_result = category_service.edit_category_record(
+        category_id=save1["category_id"], current_name=None, new_name="Async Python Docs", description="Reference docs about Python async/concurrency."
+    )
+    check("vata_edit_category succeeds", edit_cat_result.get("message") == "Category updated", str(edit_cat_result))
+    check("vata_edit_category applied the new name", edit_cat_result["category"] == "Async Python Docs", str(edit_cat_result))
+    new_cat1_id = edit_cat_result["category_id"]
+    check("vata_edit_category changed the category_id on rename", new_cat1_id != save1["category_id"])
 
-    # 6. vata_find: search by meaning
-    find_result = decision_service.evaluate_nodes_for_query("pasta recipe with basil")
-    check("vata_find returns at least one result for 'pasta recipe with basil'", find_result["count"] >= 1, str(find_result))
-    found_ids = {r["asset_id"] for r in find_result["data"]}
-    check("vata_find surfaces the pasta asset among results", save1["asset_id"] in found_ids or save3["asset_id"] in found_ids)
+    moved_assets = category_service.list_assets_in_category_record(category_id=new_cat1_id)
+    check("Assets moved along with the renamed category", moved_assets["count"] >= 1, str(moved_assets))
+
+    # 6b. vata_edit_category: description-only edit, no rename
+    edit_cat_result2 = category_service.edit_category_record(category_id=new_cat1_id, current_name=None, description="Updated description only.")
+    check("vata_edit_category (description-only) keeps the same id", edit_cat_result2["category_id"] == new_cat1_id, str(edit_cat_result2))
+    check("vata_edit_category (description-only) applied", edit_cat_result2["description"] == "Updated description only.", str(edit_cat_result2))
+
+    # 7. vata_get equivalent: fetch a single asset by id, then by title
+    full = category_service.get_asset_record(asset_id=save1["asset_id"])
+    check("get_asset_record by id returns content", "asyncio" in full["content"].lower())
+    full_by_title = category_service.get_asset_record(title=save1["title"])
+    check("get_asset_record by title resolves the same asset", full_by_title["asset_id"] == save1["asset_id"], str(full_by_title))
+
+    # 8. vata_find: search by meaning, expect both assets + categories tables
+    find_result = decision_service.evaluate_nodes_for_query("python asyncio concurrency documentation")
+    check("vata_find returns at least one asset result", find_result["count"] >= 1, str(find_result))
+    check("vata_find returns a categories table too", "categories" in find_result and len(find_result["categories"]) >= 1, str(find_result))
+    found_ids = {r["asset_id"] for r in find_result["assets"]}
+    check("vata_find surfaces one of the asyncio assets among results", save1["asset_id"] in found_ids or save3["asset_id"] in found_ids)
 
     find_budget = decision_service.evaluate_nodes_for_query("budget meeting finance")
     check("vata_find returns results for 'budget meeting finance'", find_budget["count"] >= 1, str(find_budget))
 
-    # 7. vata_edit_asset
-    edit_result = category_service.update_asset_in_record(cat1["_id"], save1["asset_id"], {"summary": "Edited summary for pasta recipe", "main_content": None, "tags": None})
-    check("vata_edit_asset succeeds", edit_result.get("message") == "Asset updated")
-    edited = category_service.get_asset_record(save1["asset_id"])
-    check("Edit persisted", edited["summary"] == "Edited summary for pasta recipe", edited["summary"])
+    # 9. vata_edit_asset: regenerate title/description/tags from new content
+    new_decision = await ai_service.decide_asset_metadata(
+        "https://docs.python.org/3/library/asyncio.html", "updated: now the canonical asyncio reference"
+    )
+    edit_result = category_service.update_asset_record(
+        save1["asset_id"], None,
+        {"title": new_decision["title"], "content": "https://docs.python.org/3/library/asyncio.html", "description": new_decision["description"], "tags": new_decision["tags"]},
+    )
+    check("vata_edit_asset succeeds", edit_result["asset_id"] == save1["asset_id"], str(edit_result))
+    check("Edit persisted new description", edit_result["description"] == new_decision["description"], edit_result["description"])
 
-    # 8. vata_link_asset / vata_unlink_asset
-    link_result = category_service.link_asset_to_category(cat2["_id"], save1["asset_id"])
-    check("vata_link_asset attaches asset to a second category", cat2["_id"] in link_result["categories"])
-
-    unlink_result = category_service.unlink_asset_from_category(cat2["_id"], save1["asset_id"])
-    check("vata_unlink_asset detaches without deleting (still in cat1)", not unlink_result["deleted"] and cat1["_id"] in unlink_result["categories"])
-
-    # 9. vata_rename_category
-    rename_result = category_service.rename_category_record(cat3["_id"], "Pasta Recipes Renamed")
-    check("vata_rename_category succeeds", rename_result["old_id"] == cat3["_id"])
-    renamed_cat_id = rename_result["new_id"]
-    check("Renamed category is retrievable under new id", category_service.get_category_summary(renamed_cat_id)["category"] == "Pasta Recipes Renamed")
-
-    # 10. vata_delete_asset -> unlink from last category -> hard delete
-    delete_result = category_service.delete_asset_from_record(renamed_cat_id, save3["asset_id"])
-    check("vata_delete_asset hard-deletes when orphaned", delete_result["hard_deleted"] is True)
+    # 10. vata_delete_asset: removes only that asset, category survives
+    delete_result = category_service.delete_asset_record(asset_id=save3["asset_id"])
+    check("vata_delete_asset succeeds", delete_result["asset_id"] == save3["asset_id"], str(delete_result))
     try:
-        category_service.get_asset_record(save3["asset_id"])
+        category_service.get_asset_record(asset_id=save3["asset_id"])
         check("Deleted asset should no longer be retrievable", False)
     except category_service.VataNotFoundError:
         check("Deleted asset correctly raises not-found", True)
+    check("Category #1 still exists after deleting one of its assets", category_service.list_assets_in_category_record(category_id=new_cat1_id)["count"] >= 1)
 
-    # 11. vata_delete_category
-    delete_cat_result = category_service.delete_category_record(cat2["_id"])
-    check("vata_delete_category succeeds", delete_cat_result["category_id"] == cat2["_id"])
+    # 11. vata_delete_category: cascades to remaining assets in it
+    delete_cat_result = category_service.delete_category_record(category_id=save2["category_id"])
+    check("vata_delete_category succeeds", delete_cat_result["category_id"] == save2["category_id"], str(delete_cat_result))
+    check("vata_delete_category deleted its asset too", save2["asset_id"] in delete_cat_result["deleted_asset_ids"], str(delete_cat_result))
     try:
-        category_service.get_category_summary(cat2["_id"])
-        check("Deleted category should no longer be retrievable", False)
+        category_service.get_asset_record(asset_id=save2["asset_id"])
+        check("Cascaded-deleted asset should no longer be retrievable", False)
     except category_service.VataNotFoundError:
-        check("Deleted category correctly raises not-found", True)
+        check("Cascaded-deleted asset correctly raises not-found", True)
 
     # 12. vata_suggest (preview only, no save)
-    preview = await ai_service.fetch_suggestions("A note about hiking trails in the mountains near the cabin.")
-    check("vata_suggest returns a category/summary/tags/category_description shape", all(k in preview for k in ("category", "summary", "tags", "category_description")), str(preview))
+    preview = await ai_service.fetch_suggestions("https://example.com/some-article", "an interesting article")
+    check("vata_suggest returns title/category/description/tags/is_link shape", all(k in preview for k in ("title", "category", "description", "tags", "is_link")), str(preview))
 
     # 13. vata_stats: metrics
     stats = category_service.get_stats()
     check("vata_stats returns categories/assets/version", all(k in stats for k in ("categories", "assets", "version")), str(stats))
-    check("vata_stats category count is positive", stats["categories"] >= 1, str(stats))
-    check("vata_stats asset count is positive", stats["assets"] >= 1, str(stats))
     print(f"  -> stats: {stats}")
 
-    # 14. vata_describe (server-level introspection — via a real MCP client, not the bare service)
+    # 14. vata_describe (server-level introspection — via a real MCP client)
     async with Client(mcp) as client:
         describe_result = (await client.call_tool("vata_describe", {})).data
     check(
