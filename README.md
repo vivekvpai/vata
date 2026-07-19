@@ -103,14 +103,18 @@ VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:
 
 | Tool | Slash prompt | Notes |
 |---|---|---|
-| `vata_save` | `/vata-save` | No `category` arg — AI decides |
+| `vata_save` | `/vata-save` | No `category` arg — AI decides, writes a description for new categories |
 | `vata_get` | `/vata-get` | asset_id / category_id / neither |
 | `vata_find` | `/vata-find` | BM25 + optional LLM re-rank |
+| `vata_stats` | `/vata-stats` | Total categories, total assets, server version |
+| `vata_list_categories` | `/vata-list-categories` | Table: category, description, asset count |
+| `vata_describe` | `/vata-describe` | What Vata is, every tool/prompt, storage/AI/auth config |
 | `vata_suggest` | — | Preview AI decision without saving |
 | `vata_edit_asset` | — | Patch content/summary/tags |
+| `vata_edit_category` | — | Update a category's description |
 | `vata_delete_asset` | — | Requires `confirm: true` |
 | `vata_delete_category` | — | Requires `confirm: true` |
-| `vata_rename_category` | — | Admin/AI maintenance use |
+| `vata_rename_category` | — | Changes name/id; admin/AI maintenance use |
 | `vata_link_asset` / `vata_unlink_asset` | — | Many-to-many membership |
 | `vata_replace_category` | — | Bulk replace |
 

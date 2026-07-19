@@ -5,7 +5,14 @@ HTTPException, since this is a standalone MCP server with no web framework
 underneath.
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 from . import storage
+
+try:
+    VATA_MCP_VERSION = version("vata-mcp")
+except PackageNotFoundError:
+    VATA_MCP_VERSION = "0.0.0-dev"
 
 
 class VataNotFoundError(Exception):
@@ -44,25 +51,49 @@ def _summary_entry(asset_id: str, asset: dict) -> dict:
 # --- Categories ---
 
 
-def resolve_or_create_category(name: str) -> dict:
-    """Find an existing category by exact name, else create one."""
+def resolve_or_create_category(name: str, description: str = "") -> dict:
+    """Find an existing category by exact name, else create one. `description`
+    is only used when the category is new — existing categories keep theirs."""
     existing = storage.find_category_by_name(name)
     if existing:
         return existing
     category_id = storage.new_category_id(name)
-    return storage.insert_category(category_id, name)
+    return storage.insert_category(category_id, name, description)
 
 
-def create_category_record(category: str) -> dict:
+def create_category_record(category: str, description: str = "") -> dict:
     if not category:
         raise ValueError("Category cannot be empty")
     category_id = storage.new_category_id(category)
-    doc = storage.insert_category(category_id, category)
+    doc = storage.insert_category(category_id, category, description)
     return {"message": "Category created", "category_id": category_id, "category": doc["category"]}
 
 
 def list_categories_record() -> dict:
-    return {"categories": [{"category_id": c["_id"], "category": c["category"]} for c in storage.list_categories()]}
+    """Table-style listing: name, description, and asset count per category."""
+    rows = []
+    for c in storage.list_categories():
+        rows.append({
+            "category_id": c["_id"],
+            "category": c["category"],
+            "description": c.get("description", ""),
+            "asset_count": len(storage.members_of_category(c["_id"])),
+        })
+    return {"count": len(rows), "categories": rows}
+
+
+def edit_category_description(category_id: str, description: str) -> dict:
+    _require_category(category_id)
+    storage.update_category_description(category_id, description)
+    return {"message": "Category description updated", "category_id": category_id, "description": description}
+
+
+def get_stats() -> dict:
+    return {
+        "categories": storage.count_categories(),
+        "assets": storage.count_assets(),
+        "version": VATA_MCP_VERSION,
+    }
 
 
 def get_category_summary(category_id: str) -> dict:
@@ -72,7 +103,13 @@ def get_category_summary(category_id: str) -> dict:
         asset = storage.get_asset(aid)
         if asset:
             items.append(_summary_entry(aid, asset))
-    return {"category": cat["category"], "category_id": category_id, "count": len(items), "items": items}
+    return {
+        "category": cat["category"],
+        "category_id": category_id,
+        "description": cat.get("description", ""),
+        "count": len(items),
+        "items": items,
+    }
 
 
 def delete_category_record(category_id: str) -> dict:

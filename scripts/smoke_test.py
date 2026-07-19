@@ -12,6 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from fastmcp import Client
+
+from vata_mcp.server import mcp
 from vata_mcp.services import ai_service, category_service, decision_service
 
 
@@ -29,15 +32,16 @@ async def main() -> None:
     decision1 = await ai_service.decide_category_and_metadata(
         "Recipe for tomato basil pasta: boil pasta, saute garlic and basil, add crushed tomatoes, simmer 10 minutes."
     )
-    cat1 = category_service.resolve_or_create_category(decision1["category"])
+    check("vata_save #1 decision includes a category_description", bool(decision1.get("category_description")), str(decision1))
+    cat1 = category_service.resolve_or_create_category(decision1["category"], decision1["category_description"])
     save1 = category_service.add_asset_to_category_record(cat1["_id"], "Recipe for tomato basil pasta...", decision1["summary"], decision1["tags"])
     check("vata_save #1 created an asset", bool(save1.get("asset_id")))
-    print(f"  -> filed under category: {cat1['category']!r} (id={cat1['_id']})")
+    print(f"  -> filed under category: {cat1['category']!r} (id={cat1['_id']}, description={cat1.get('description')!r})")
 
     decision2 = await ai_service.decide_category_and_metadata(
         "Quarterly budget review meeting notes: Q3 revenue up 12%, marketing spend needs review, follow up with finance team next week."
     )
-    cat2 = category_service.resolve_or_create_category(decision2["category"])
+    cat2 = category_service.resolve_or_create_category(decision2["category"], decision2["category_description"])
     save2 = category_service.add_asset_to_category_record(cat2["_id"], "Quarterly budget review meeting notes...", decision2["summary"], decision2["tags"])
     check("vata_save #2 created an asset", bool(save2.get("asset_id")))
     print(f"  -> filed under category: {cat2['category']!r} (id={cat2['_id']})")
@@ -48,18 +52,26 @@ async def main() -> None:
     decision3 = await ai_service.decide_category_and_metadata(
         "Another pasta recipe: penne with garlic and olive oil, add basil and parmesan."
     )
-    cat3 = category_service.resolve_or_create_category(decision3["category"])
+    cat3 = category_service.resolve_or_create_category(decision3["category"], decision3["category_description"])
     save3 = category_service.add_asset_to_category_record(cat3["_id"], "Another pasta recipe...", decision3["summary"], decision3["tags"])
     check("vata_save #3 created an asset", bool(save3.get("asset_id")))
     print(f"  -> filed under category: {cat3['category']!r} (id={cat3['_id']}) [expected to reuse #1's category ideally]")
 
-    # 3. vata_get: list categories
+    # 3. vata_list_categories: table view with description + asset_count
     listing = category_service.list_categories_record()
-    check("vata_get (list categories) returns at least 2 categories", len(listing["categories"]) >= 2, str(listing))
+    check("vata_list_categories returns at least 2 categories", len(listing["categories"]) >= 2, str(listing))
+    check("vata_list_categories rows include description and asset_count", all("description" in row and "asset_count" in row for row in listing["categories"]), str(listing))
 
     # 4. vata_get: category summary
     summary = category_service.get_category_summary(cat1["_id"])
     check("vata_get (category summary) returns items", summary["count"] >= 1, str(summary))
+    check("vata_get (category summary) includes description", "description" in summary, str(summary))
+
+    # 4b. vata_edit_category: update description (do this before any rename touches cat1/cat3's shared category)
+    edit_cat_result = category_service.edit_category_description(cat1["_id"], "Updated description via vata_edit_category.")
+    check("vata_edit_category succeeds", edit_cat_result.get("message") == "Category description updated")
+    reloaded = category_service.get_category_summary(cat1["_id"])
+    check("Edited category description persisted", reloaded["description"] == "Updated description via vata_edit_category.", reloaded["description"])
 
     # 5. vata_get: full asset
     full = category_service.get_asset_record(save1["asset_id"])
@@ -113,7 +125,26 @@ async def main() -> None:
 
     # 12. vata_suggest (preview only, no save)
     preview = await ai_service.fetch_suggestions("A note about hiking trails in the mountains near the cabin.")
-    check("vata_suggest returns a category/summary/tags shape", all(k in preview for k in ("category", "summary", "tags")), str(preview))
+    check("vata_suggest returns a category/summary/tags/category_description shape", all(k in preview for k in ("category", "summary", "tags", "category_description")), str(preview))
+
+    # 13. vata_stats: metrics
+    stats = category_service.get_stats()
+    check("vata_stats returns categories/assets/version", all(k in stats for k in ("categories", "assets", "version")), str(stats))
+    check("vata_stats category count is positive", stats["categories"] >= 1, str(stats))
+    check("vata_stats asset count is positive", stats["assets"] >= 1, str(stats))
+    print(f"  -> stats: {stats}")
+
+    # 14. vata_describe (server-level introspection — via a real MCP client, not the bare service)
+    async with Client(mcp) as client:
+        describe_result = (await client.call_tool("vata_describe", {})).data
+    check(
+        "vata_describe returns name/tools/prompts/backends",
+        all(k in describe_result for k in ("name", "tools", "prompts", "storage_backend", "ai_backend", "auth_enabled")),
+        str(describe_result),
+    )
+    check("vata_describe lists vata_save among tools", "vata_save" in describe_result["tools"], str(describe_result["tools"]))
+    check("vata_describe lists vata-find among prompts", "vata-find" in describe_result["prompts"], str(describe_result["prompts"]))
+    print(f"  -> describe: {describe_result['storage_backend']}, {describe_result['ai_backend']}, auth_enabled={describe_result['auth_enabled']}")
 
     print("\n=== All smoke tests passed ===")
 

@@ -14,7 +14,9 @@ from ulid import ULID
 _MONGODB_URI = os.getenv("VATA_MONGODB_URI")
 _DB_NAME = os.getenv("VATA_MONGODB_DB", "vata")
 
-if _MONGODB_URI:
+_USING_REAL_MONGODB = bool(_MONGODB_URI)
+
+if _USING_REAL_MONGODB:
     from pymongo import MongoClient
 
     _client = MongoClient(_MONGODB_URI)
@@ -24,6 +26,14 @@ else:
 
     _client = mongomock.MongoClient()
     print("[vata-mcp] storage: no VATA_MONGODB_URI set — using in-memory mongomock (dummy DB, data does not persist across restarts)")
+
+
+def backend_info() -> dict:
+    return {
+        "backend": "mongodb" if _USING_REAL_MONGODB else "mongomock (in-memory, non-persistent)",
+        "database": _DB_NAME,
+        "persistent": _USING_REAL_MONGODB,
+    }
 
 _db = _client[_DB_NAME]
 
@@ -56,9 +66,15 @@ def now_iso() -> str:
 # --- Categories ---
 
 
-def insert_category(category_id: str, name: str) -> dict:
+def insert_category(category_id: str, name: str, description: str = "") -> dict:
     now = now_iso()
-    doc = {"_id": category_id, "category": name, "created_at": now, "updated_at": now}
+    doc = {
+        "_id": category_id,
+        "category": name,
+        "description": description or "",
+        "created_at": now,
+        "updated_at": now,
+    }
     categories_col.insert_one(doc)
     return doc
 
@@ -77,6 +93,21 @@ def list_categories() -> list[dict]:
 
 def touch_category(category_id: str) -> None:
     categories_col.update_one({"_id": category_id}, {"$set": {"updated_at": now_iso()}})
+
+
+def update_category_description(category_id: str, description: str) -> None:
+    categories_col.update_one(
+        {"_id": category_id},
+        {"$set": {"description": description, "updated_at": now_iso()}},
+    )
+
+
+def count_categories() -> int:
+    return categories_col.count_documents({})
+
+
+def count_assets() -> int:
+    return assets_col.count_documents({})
 
 
 def rename_category(category_id: str, new_id: str, new_name: str) -> None:

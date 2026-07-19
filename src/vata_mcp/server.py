@@ -1,8 +1,10 @@
 """Vata MCP server.
 
-Exposes the full Vata operation set as MCP tools, plus three slash prompts
-(`vata-save`, `vata-get`, `vata-find`) for the common path. Categories are
-fully AI-managed: `vata_save` never takes a category argument.
+Exposes the full Vata operation set as MCP tools, plus slash prompts
+(`vata-save`, `vata-get`, `vata-find`, `vata-stats`, `vata-list-categories`,
+`vata-describe`) for the common path. Categories are fully AI-managed:
+`vata_save` never takes a category argument, and new categories get an
+AI-written description alongside the name.
 
 Run locally (dummy in-memory Mongo, heuristic AI, no external services):
     python -m vata_mcp.server
@@ -44,9 +46,11 @@ async def vata_save(
 ) -> dict:
     """Save content to Vata. The category is decided entirely by AI —
     never pass a category. AI reuses an existing category if the content
-    fits, or creates a new one automatically."""
+    fits, or creates a new one automatically, with an AI-written description."""
     decision = await ai_service.decide_category_and_metadata(content, summary, tags)
-    category_doc = category_service.resolve_or_create_category(decision["category"])
+    category_doc = category_service.resolve_or_create_category(
+        decision["category"], decision.get("category_description", "")
+    )
     result = category_service.add_asset_to_category_record(
         category_doc["_id"], content, decision["summary"], decision["tags"]
     )
@@ -65,9 +69,11 @@ async def vata_get(
     asset_id: Annotated[str | None, Field(description="Fetch one specific asset by id.")] = None,
     category_id: Annotated[str | None, Field(description="List summaries of assets in one category.")] = None,
 ) -> dict:
-    """Retrieve saved content. No args -> list all categories (admin/debug
-    view). category_id only -> summaries of everything in it. asset_id ->
-    full content of one asset. Prefer vata_find for retrieval by meaning."""
+    """Retrieve saved content. No args -> list all categories (use
+    vata_list_categories for a dedicated table view instead). category_id
+    only -> summaries of everything in it, table-ready (name, summary,
+    count). asset_id -> full content of one asset. Prefer vata_find for
+    retrieval by meaning rather than by id."""
     try:
         if asset_id:
             return category_service.get_asset_record(asset_id)
@@ -97,6 +103,46 @@ async def vata_suggest(
     """Preview what vata_save would decide (category/summary/tags) without
     writing anything. Useful for transparency/debugging."""
     return await ai_service.fetch_suggestions(content, summary, tags)
+
+
+@mcp.tool
+async def vata_stats() -> dict:
+    """Return overall Vata metrics: total categories, total assets, and the
+    running server version."""
+    return category_service.get_stats()
+
+
+@mcp.tool
+async def vata_describe() -> dict:
+    """Describe this Vata MCP server: what it is, every tool and prompt it
+    exposes, and the current backend configuration (storage, AI, auth).
+    Use this when asked "what can Vata do" or "how is Vata configured"."""
+    tools = await mcp.list_tools()
+    prompts = await mcp.list_prompts()
+    return {
+        "name": "Vata MCP",
+        "description": (
+            "A personal knowledge store exposed as MCP tools/prompts. Save "
+            "arbitrary content with vata_save — AI decides which category it "
+            "belongs to (creating one with a written description if none "
+            "fits) so you never manage categories by hand. Retrieve by "
+            "meaning with vata_find, by id with vata_get, or browse "
+            "everything with vata_list_categories/vata_stats."
+        ),
+        "version": category_service.VATA_MCP_VERSION,
+        "tools": sorted(t.name for t in tools),
+        "prompts": sorted(p.name for p in prompts),
+        "storage_backend": storage.backend_info(),
+        "ai_backend": ai_service.backend_info(),
+        "auth_enabled": bool(os.getenv("VATA_MCP_TOKEN")),
+    }
+
+
+@mcp.tool
+async def vata_list_categories() -> dict:
+    """List every category with its name, AI-written description, and
+    asset count. Present this as a table: Category | Description | Assets."""
+    return category_service.list_categories_record()
 
 
 # --- Tools: edit / delete / link (tool-only, no slash prompt) ---
@@ -157,6 +203,19 @@ async def vata_rename_category(
     try:
         return category_service.rename_category_record(category_id, new_name)
     except (VataNotFoundError, VataConflictError) as e:
+        return _error(e)
+
+
+@mcp.tool
+async def vata_edit_category(
+    category_id: Annotated[str, Field(description="Category whose description will be updated.")],
+    description: Annotated[str, Field(description="New one-sentence description of what belongs in this category.")],
+) -> dict:
+    """Edit a category's description (name changes go through
+    vata_rename_category instead)."""
+    try:
+        return category_service.edit_category_description(category_id, description)
+    except VataNotFoundError as e:
         return _error(e)
 
 
@@ -222,17 +281,36 @@ def vata_get_prompt(what: str = "") -> str:
         return (
             f"The user wants to retrieve: {what!r}. "
             "If this looks like a specific asset id, call vata_get with asset_id. "
-            "If it looks like a category id, call vata_get with category_id. "
+            "If it looks like a category id, call vata_get with category_id and "
+            "present the result's items as a table: Summary | Tags | Updated. "
             "Otherwise, prefer calling vata_find with this as the query instead, "
             "since vata_get requires an id and vata_find searches by meaning."
         )
-    return "Call the vata_get tool with no arguments to list all categories."
+    return "Call the vata_list_categories tool and present the result as a table: Category | Description | Assets."
 
 
 @mcp.prompt(name="vata-find")
 def vata_find_prompt(query: str) -> str:
     """Search everything saved to Vata by meaning."""
     return f"Call the vata_find tool with query={query!r} and present the ranked results with their match reasons."
+
+
+@mcp.prompt(name="vata-stats")
+def vata_stats_prompt() -> str:
+    """Show Vata's overall metrics: category count, asset count, version."""
+    return "Call the vata_stats tool and report the category count, asset count, and version."
+
+
+@mcp.prompt(name="vata-list-categories")
+def vata_list_categories_prompt() -> str:
+    """List all categories in a table: name, description, asset count."""
+    return "Call the vata_list_categories tool and present the result as a table: Category | Description | Assets."
+
+
+@mcp.prompt(name="vata-describe")
+def vata_describe_prompt() -> str:
+    """Describe what this Vata MCP server is and how it's configured."""
+    return "Call the vata_describe tool and summarize what Vata is, its available tools/prompts, and its current storage/AI/auth configuration."
 
 
 def main() -> None:

@@ -25,6 +25,13 @@ def _use_llm() -> bool:
     return bool(_LLM_MODEL)
 
 
+def backend_info() -> dict:
+    return {
+        "backend": _LLM_MODEL if _use_llm() else "local heuristic (keyword overlap, no LLM configured)",
+        "llm_configured": _use_llm(),
+    }
+
+
 def _llm_invoke(system_prompt: str, user_message: str) -> str | None:
     """Best-effort LLM call. Returns None on any failure so callers fall
     back to the heuristic path instead of raising."""
@@ -105,13 +112,21 @@ def _heuristic_category(content: str, tags: list[str]) -> str:
     return (top_keywords[0].capitalize() if top_keywords else "General")
 
 
+def _heuristic_category_description(category_name: str, tags: list[str]) -> str:
+    tag_hint = ", ".join(tags[:3]) if tags else category_name.lower()
+    return f"Notes related to {tag_hint}."
+
+
 async def decide_category_and_metadata(
     content: str, summary: str | None = None, tags: list[str] | None = None
 ) -> dict:
-    """Returns {"category": str, "summary": str, "tags": list[str]}.
+    """Returns {"category": str, "category_description": str, "summary": str,
+    "tags": list[str]}.
 
-    Category may be an existing category name or a brand-new one; caller
-    is responsible for resolving/creating the category_id.
+    Category may be an existing category name or a brand-new one; caller is
+    responsible for resolving/creating the category_id. `category_description`
+    is only used by the caller when the category turns out to be new — existing
+    categories keep their original description.
     """
     existing_categories = [c["category"] for c in storage.list_categories()]
 
@@ -120,9 +135,11 @@ async def decide_category_and_metadata(
             "You are a filing assistant. Given new content and a list of existing "
             "categories, decide which single category it belongs to (reuse an "
             "existing one whenever it reasonably fits; only propose a new short "
-            "category name when nothing fits). Also produce a one-sentence summary "
-            "and up to 5 lowercase tags if not already provided. Respond strictly as "
-            'JSON: {"category": "...", "summary": "...", "tags": ["...", ...]}'
+            "category name when nothing fits). If proposing a new category, also "
+            "write a one-sentence description of what belongs in it. Also produce "
+            "a one-sentence summary of the content and up to 5 lowercase tags if "
+            "not already provided. Respond strictly as JSON: "
+            '{"category": "...", "category_description": "...", "summary": "...", "tags": ["...", ...]}'
         )
         user_message = (
             f"Existing categories: {json.dumps(existing_categories)}\n\n"
@@ -134,10 +151,15 @@ async def decide_category_and_metadata(
         if raw:
             try:
                 parsed = json.loads(_clean_json(raw))
+                resolved_tags = list(parsed.get("tags") or tags or _heuristic_tags(content, tags))
                 return {
                     "category": str(parsed.get("category") or "General"),
+                    "category_description": str(
+                        parsed.get("category_description")
+                        or _heuristic_category_description(str(parsed.get("category") or "General"), resolved_tags)
+                    ),
                     "summary": str(parsed.get("summary") or summary or _heuristic_summary(content, summary)),
-                    "tags": list(parsed.get("tags") or tags or _heuristic_tags(content, tags)),
+                    "tags": resolved_tags,
                 }
             except Exception as e:
                 print(f"[vata-mcp] ai_service: failed to parse LLM response, using heuristic: {e}")
@@ -145,7 +167,13 @@ async def decide_category_and_metadata(
     resolved_tags = _heuristic_tags(content, tags)
     resolved_summary = _heuristic_summary(content, summary)
     resolved_category = _heuristic_category(content, resolved_tags)
-    return {"category": resolved_category, "summary": resolved_summary, "tags": resolved_tags}
+    resolved_description = _heuristic_category_description(resolved_category, resolved_tags)
+    return {
+        "category": resolved_category,
+        "category_description": resolved_description,
+        "summary": resolved_summary,
+        "tags": resolved_tags,
+    }
 
 
 async def fetch_suggestions(content: str, summary: str | None = None, tags: list[str] | None = None) -> dict:
