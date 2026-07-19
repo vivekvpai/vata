@@ -168,6 +168,35 @@ async def main() -> None:
     preview = await ai_service.fetch_suggestions("https://example.com/some-article", "an interesting article")
     check("vata_suggest returns title/category/description/tags/is_link shape", all(k in preview for k in ("title", "category", "description", "tags", "is_link")), str(preview))
 
+    # 12b. vata_save via the real MCP tool with everything explicit — the caller (a reasoning
+    # LLM in real use) decides title/category/description/tags; the server must pass them
+    # through untouched, not overwrite them with its own heuristic/LLM guess.
+    async with Client(mcp) as client:
+        explicit_save = (await client.call_tool("vata_save", {
+            "content": "https://fastapi.tiangolo.com/tutorial/",
+            "title": "FastAPI official tutorial",
+            "category": "Web Frameworks",
+            "category_description": "Docs and links about Python web frameworks.",
+            "description": "Official step-by-step tutorial for building APIs with FastAPI.",
+            "tags": ["fastapi", "python", "tutorial", "web"],
+        })).data
+    check("vata_save preserves an explicit caller-provided title verbatim", explicit_save["title"] == "FastAPI official tutorial", str(explicit_save))
+    check("vata_save preserves an explicit caller-provided category verbatim", explicit_save["category"] == "Web Frameworks", str(explicit_save))
+    check("vata_save preserves an explicit caller-provided description verbatim", explicit_save["description"] == "Official step-by-step tutorial for building APIs with FastAPI.", str(explicit_save))
+    check("vata_save preserves explicit caller-provided tags verbatim", explicit_save["tags"] == ["fastapi", "python", "tutorial", "web"], str(explicit_save))
+
+    # 12c. vata_save with only title+category given — description/tags should still be filled by the fallback
+    async with Client(mcp) as client:
+        partial_save = (await client.call_tool("vata_save", {
+            "content": "https://docs.python.org/3/",
+            "title": "Python official docs",
+            "category": "Web Frameworks",
+        })).data
+    check("vata_save preserves partial explicit title", partial_save["title"] == "Python official docs", str(partial_save))
+    check("vata_save preserves partial explicit category", partial_save["category"] == "Web Frameworks", str(partial_save))
+    check("vata_save fills in a description when left blank", bool(partial_save["description"]), str(partial_save))
+    check("vata_save fills in tags when left blank", len(partial_save["tags"]) > 0, str(partial_save))
+
     # 13. vata_stats: metrics
     stats = category_service.get_stats()
     check("vata_stats returns categories/assets/version", all(k in stats for k in ("categories", "assets", "version")), str(stats))

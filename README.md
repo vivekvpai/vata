@@ -1,8 +1,17 @@
 # vata-mcp
 
 Vata exposed as an MCP server: a personal link/notes archive. Save a link
-or note, AI writes its title/description/tags and decides which category
-it belongs to (never a user-facing concept) — you just save and search.
+or note; the LLM already driving your chat session decides its title,
+category, description, and tags and calls `vata_save` with them — you
+just save and search, categories are never something you manage by hand.
+
+**Design note:** the categorization "AI" here is not a separate service —
+it's whichever model is already in your MCP client (Claude, etc.). The
+`/vata-save` prompt instructs it to call `vata_list_categories`, decide
+fit-or-new itself, and pass explicit values into `vata_save`. No
+`VATA_LLM_MODEL` or API key is needed for this to work well. That setting
+only matters for callers that *can't* reason (a bare script calling the
+tool directly) — see [Tools](#tools) below.
 
 This branch is MCP-only — the original FastAPI + React app lives on
 `master`. Design docs: [VATA_MCP_PLAN.md](VATA_MCP_PLAN.md),
@@ -17,10 +26,11 @@ Running locally for personal use, on this machine, right now:
   service on `mongodb://localhost:27017`. No account, no internet
   dependency, no cost. (Falls back to in-memory `mongomock` automatically
   if `VATA_MONGODB_URI` isn't set — useful for quick throwaway testing.)
-- **AI**: category/summary/tag decisions use a local keyword-overlap
-  heuristic by default — no LLM API key needed. Set `VATA_LLM_MODEL`
-  (litellm-style model string, e.g. `gpt-4o-mini`) plus the provider's API
-  key env var to switch to a real LLM later.
+- **AI**: the calling assistant (Claude, etc.) decides title/category/
+  description/tags itself and passes them into `vata_save` — no separate
+  LLM call, no API key needed for normal chat use. `VATA_LLM_MODEL` is
+  only a fallback for non-reasoning callers; unset by default, falls back
+  further to a local keyword-overlap heuristic if also unset.
 - **Client wiring**: `.mcp.json` at the repo root configures Claude
   Code to launch this server via stdio automatically when you're working
   in this folder — nothing to run manually.
@@ -105,23 +115,24 @@ VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:
 
 Each asset (a saved link or note) belongs to **exactly one** category —
 there's no many-to-many linking. Deleting a category deletes every asset
-inside it. Assets have: `title` (AI-generated), `content` (the link or raw
-text you gave), `description` (AI one-liner), `tags` (AI list). You can
-always address a specific asset by `asset_id` or by its exact `title`.
+inside it. Assets have: `title`, `content` (the link or raw text saved),
+`description`, `tags` — normally all decided by the calling assistant, see
+the design note above. You can always address a specific asset by
+`asset_id` or by its exact `title`.
 
 ## Tools
 
 | Tool | Slash prompt | Notes |
 |---|---|---|
-| `vata_save` | `/vata-save` | `content` (link/text) + optional `description` hint. No `category` arg — AI decides, writes title/description/tags, and a category description if new |
-| `vata_list_categories` | `/vata-list-categories` | Table: category, description, asset count |
+| `vata_save` | `/vata-save` | `content` (link/text) + `title`/`category`/`category_description`/`description`/`tags` — the calling assistant should fill these in itself after checking `vata_list_categories`. Anything left blank falls back to `VATA_LLM_MODEL` or a local heuristic |
+| `vata_list_categories` | `/vata-list-categories` | Table: category, description, asset count. Call this before deciding a category for a new save |
 | `vata_list_assets` | `/vata-list-assets` | Table for one category: title, content, description, tags |
 | `vata_find` | `/vata-find` | Search by meaning; returns matching assets **and** the categories they came from, both table-ready |
 | `vata_stats` | `/vata-stats` | Total categories, total assets, server version |
 | `vata_describe` | `/vata-describe` | What Vata is, every tool/prompt, storage/AI/auth config |
-| `vata_suggest` | — | Preview AI decision (title/category/description/tags) without saving |
+| `vata_suggest` | — | Preview what the fallback (LLM/heuristic) would decide, without saving — for debugging the fallback path specifically |
 | `vata_edit_category` | — | Rename and/or edit description; assets move with a rename |
-| `vata_edit_asset` | — | Give `new_content` (+ optional `hint`) to regenerate title/description/tags, or edit by id/title directly |
+| `vata_edit_asset` | — | Give `new_content` + `new_title`/`new_description`/`new_tags` (caller decides these), or edit by id/current_title directly |
 | `vata_delete_category` | — | Requires `confirm: true`. Deletes the category **and every asset inside it** |
 | `vata_delete_asset` | — | Requires `confirm: true`. Deletes only that one asset |
 | `vata_clean` | `/vata-clean` | Wipes **everything** (all categories + assets). Requires a password matching `VATA_CLEAN_PASSWORD`; disabled entirely if that env var isn't set |

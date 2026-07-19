@@ -1,13 +1,19 @@
-"""AI decision layer: category assignment + title/description/tag generation.
+"""Metadata decision layer: category assignment + title/description/tag
+generation for saved assets.
 
-Tries a real LLM via `litellm` when `VATA_LLM_MODEL` (+ credentials) is
-configured. Otherwise falls back to a deterministic local heuristic so the
-whole server runs with zero API keys during local/dummy development.
+The intended caller is the LLM already driving the MCP session (Claude,
+ChatGPT, etc.) — it reasons about the content itself and passes explicit
+title/category/description/tags into vata_save. This module's job is then
+just to fill in whatever the caller left blank, so nothing is ever
+required to be empty. Fill-in order:
 
-Content saved via vata_save is usually a link, sometimes plain text — both
-are supported. The AI always produces: a short title, the category it
-belongs to (existing or new, with a description if new), a one-sentence
-description of the content, and up to 5 tags.
+  1. Explicit value passed by the caller — used as-is, no computation.
+  2. VATA_LLM_MODEL, if configured — the server makes its own LLM call.
+     Only useful for callers that can't reason themselves (scripts, cron).
+  3. Local keyword-overlap heuristic — always available, zero cost,
+     zero API key, works with nothing configured.
+
+Content saved via vata_save is usually a link, sometimes plain text.
 """
 
 import json
@@ -164,18 +170,55 @@ def _heuristic_category_description(category_name: str, tags: list[str]) -> str:
     return f"Notes and links related to {tag_hint}."
 
 
-async def decide_asset_metadata(
-    content: str, description: str | None = None, tags: list[str] | None = None
-) -> dict:
-    """Returns {"title", "category", "category_description", "description",
-    "tags", "is_link"}.
+def list_existing_categories() -> list[dict]:
+    """Categories with enough context (name + description + a few asset
+    titles/tags) for a calling LLM to judge fit without a second round trip."""
+    result = []
+    for cat in storage.list_categories():
+        sample = storage.list_assets_in_category(cat["_id"])[:5]
+        result.append({
+            "category": cat["category"],
+            "category_id": cat["_id"],
+            "description": cat.get("description", ""),
+            "sample_titles": [a.get("title", "") for a in sample],
+            "sample_tags": sorted({t for a in sample for t in a.get("tags", [])})[:10],
+        })
+    return result
 
-    `content` is a link or freeform text. `description` is an optional
-    user-supplied hint about the content (e.g. why it's worth saving) —
-    used to steer title/description/category generation, not stored
-    verbatim unless the AI has nothing better.
+
+async def decide_asset_metadata(
+    content: str,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    title: str | None = None,
+    category: str | None = None,
+    category_description: str | None = None,
+) -> dict:
+    """Fills in only whatever the caller left blank. Returns {"title",
+    "category", "category_description", "description", "tags", "is_link"}.
+
+    Preferred usage: the calling LLM already reasoned about the content —
+    it calls vata_list_categories itself, decides fit-or-new, and passes
+    title/category/description/tags explicitly. In that case this function
+    does nothing but pass them through untouched.
+
+    Any field left None falls back to VATA_LLM_MODEL (if configured) or the
+    local heuristic — for callers that can't reason for themselves (direct
+    script/API use).
     """
     content_is_link = is_link(content)
+
+    # Caller supplied everything — no computation needed at all.
+    if title and category and description and tags:
+        return {
+            "title": title,
+            "category": category,
+            "category_description": category_description or "",
+            "description": description,
+            "tags": tags,
+            "is_link": content_is_link,
+        }
+
     existing_categories = [c["category"] for c in storage.list_categories()]
 
     if _use_llm():
@@ -201,16 +244,16 @@ async def decide_asset_metadata(
         if raw:
             try:
                 parsed = json.loads(_clean_json(raw))
-                resolved_tags = list(parsed.get("tags") or tags or _heuristic_tags(content, description or "", tags))
-                resolved_category = str(parsed.get("category") or "General")
+                resolved_tags = tags or list(parsed.get("tags") or _heuristic_tags(content, description or "", None))
+                resolved_category = category or str(parsed.get("category") or "General")
                 return {
-                    "title": str(parsed.get("title") or _heuristic_title(content, description or "")),
+                    "title": title or str(parsed.get("title") or _heuristic_title(content, description or "")),
                     "category": resolved_category,
-                    "category_description": str(
+                    "category_description": category_description or str(
                         parsed.get("category_description")
                         or _heuristic_category_description(resolved_category, resolved_tags)
                     ),
-                    "description": str(parsed.get("description") or _heuristic_description(content, description or "")),
+                    "description": description or str(parsed.get("description") or _heuristic_description(content, description or "")),
                     "tags": resolved_tags,
                     "is_link": content_is_link,
                 }
@@ -218,11 +261,11 @@ async def decide_asset_metadata(
                 print(f"[vata-mcp] ai_service: failed to parse LLM response, using heuristic: {e}")
 
     user_description = description or ""
-    resolved_tags = _heuristic_tags(content, user_description, tags)
-    resolved_title = _heuristic_title(content, user_description)
-    resolved_description = _heuristic_description(content, user_description)
-    resolved_category = _heuristic_category(content, user_description, resolved_tags)
-    resolved_category_description = _heuristic_category_description(resolved_category, resolved_tags)
+    resolved_tags = tags or _heuristic_tags(content, user_description, None)
+    resolved_title = title or _heuristic_title(content, user_description)
+    resolved_description = description or _heuristic_description(content, user_description)
+    resolved_category = category or _heuristic_category(content, user_description, resolved_tags)
+    resolved_category_description = category_description or _heuristic_category_description(resolved_category, resolved_tags)
     return {
         "title": resolved_title,
         "category": resolved_category,
@@ -233,7 +276,13 @@ async def decide_asset_metadata(
     }
 
 
-async def fetch_suggestions(content: str, description: str | None = None, tags: list[str] | None = None) -> dict:
+async def fetch_suggestions(
+    content: str,
+    description: str | None = None,
+    tags: list[str] | None = None,
+    title: str | None = None,
+    category: str | None = None,
+) -> dict:
     """Standalone suggestion tool (vata_suggest) — same decision, exposed
     directly without saving anything."""
-    return await decide_asset_metadata(content, description, tags)
+    return await decide_asset_metadata(content, description, tags, title, category)

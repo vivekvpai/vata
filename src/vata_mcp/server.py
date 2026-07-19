@@ -5,10 +5,13 @@ A personal link/notes archive exposed as MCP tools + slash prompts:
 `vata-edit-asset`, `vata-delete-category`, `vata-delete-asset`, `vata-find`,
 `vata-describe`, `vata-stats`, `vata-clean`.
 
-Categories are fully AI-managed: `vata_save` never takes a category
-argument. Each asset belongs to exactly one category — deleting a category
-deletes its assets too. Assets are addressable by id or by their
-AI-generated title.
+Categories are managed by whichever LLM is driving the MCP session — the
+calling assistant is expected to call `vata_list_categories`, decide
+title/category/description/tags itself, and pass them explicitly into
+`vata_save`. Fields left blank fall back to `VATA_LLM_MODEL` or a local
+heuristic, for callers that can't reason for themselves. Each asset
+belongs to exactly one category — deleting a category deletes its assets
+too. Assets are addressable by id or by title.
 
 Run locally (dummy in-memory Mongo, heuristic AI, no external services):
     python -m vata_mcp.server
@@ -49,17 +52,27 @@ def _error(exc: Exception) -> dict:
 @mcp.tool
 async def vata_save(
     content: Annotated[str, Field(description="A link (URL) or freeform text to save.")],
+    title: Annotated[str | None, Field(description="Short title for this asset. You should decide this yourself from the content — don't leave it blank if you're a reasoning model.")] = None,
+    category: Annotated[
+        str | None,
+        Field(description="Which category this belongs to. Call vata_list_categories first, pick an existing one that fits, or invent a short new one if none fit. You decide this — don't leave it blank if you're a reasoning model."),
+    ] = None,
+    category_description: Annotated[str | None, Field(description="One-sentence description of the category, only needed if `category` is a brand-new one that didn't already exist.")] = None,
     description: Annotated[
         str | None,
-        Field(description="Optional hint about the content — why you're saving it, what it's about. AI uses this plus the content to write the title/description/tags/category."),
+        Field(description="One-sentence description of the content itself, in your own words. You should write this yourself — don't leave it blank if you're a reasoning model."),
     ] = None,
-    tags: Annotated[list[str] | None, Field(description="Optional tag list override. AI generates tags if omitted.")] = None,
+    tags: Annotated[list[str] | None, Field(description="Up to 5 lowercase tags. You should pick these yourself — don't leave it blank if you're a reasoning model.")] = None,
 ) -> dict:
-    """Save a link or note to Vata. Never pass a category — AI decides
-    which existing category it belongs to, or creates a new one (with an
-    AI-written description) automatically. AI also generates a title and a
-    one-sentence description of the content itself."""
-    decision = await ai_service.decide_asset_metadata(content, description, tags)
+    """Save a link or note to Vata. Fill in title/category/description/tags
+    yourself by reasoning about the content — call vata_list_categories
+    first to see what already exists and reuse a fitting one, or invent a
+    short new category name if nothing fits. Only leave these blank if you
+    are not a reasoning model (e.g. a plain script); in that case the
+    server falls back to VATA_LLM_MODEL or a local heuristic."""
+    decision = await ai_service.decide_asset_metadata(
+        content, description, tags, title, category, category_description
+    )
     category_doc = category_service.resolve_or_create_category(
         decision["category"], decision.get("category_description", "")
     )
@@ -138,11 +151,13 @@ async def vata_describe() -> dict:
         "name": "Vata MCP",
         "description": (
             "A personal link/notes archive exposed as MCP tools/prompts. Save "
-            "a link or note with vata_save — AI writes a title, description, "
-            "tags, and decides which category it belongs to (creating one "
-            "with a written description if none fits), so you never manage "
-            "categories or metadata by hand. Retrieve by meaning with "
-            "vata_find, or browse with vata_list_categories/vata_list_assets."
+            "a link or note with vata_save — the calling assistant is expected "
+            "to reason about the content itself: call vata_list_categories "
+            "first, pick a fitting existing category or invent a short new "
+            "one, then pass explicit title/category/description/tags into "
+            "vata_save. Anything left blank falls back to VATA_LLM_MODEL or a "
+            "local heuristic. Retrieve by meaning with vata_find, or browse "
+            "with vata_list_categories/vata_list_assets."
         ),
         "version": category_service.VATA_MCP_VERSION,
         "tools": sorted(t.name for t in tools),
@@ -174,22 +189,28 @@ async def vata_edit_category(
 @mcp.tool
 async def vata_edit_asset(
     asset_id: Annotated[str | None, Field(description="Asset to edit, by id.")] = None,
-    title: Annotated[str | None, Field(description="Asset to edit, by its current exact title (used if asset_id omitted).")] = None,
+    current_title: Annotated[str | None, Field(description="Asset to edit, by its current exact title (used if asset_id omitted).")] = None,
     new_content: Annotated[str | None, Field(description="New link or text content, if changing.")] = None,
+    new_title: Annotated[str | None, Field(description="New title, if new_content is given. You should decide this yourself by reasoning about new_content.")] = None,
+    new_description: Annotated[str | None, Field(description="New one-sentence description, if new_content is given. You should write this yourself.")] = None,
+    new_tags: Annotated[list[str] | None, Field(description="New tag list, if new_content is given. You should pick these yourself.")] = None,
     hint: Annotated[
         str | None,
-        Field(description="A hint about the new content, if changing it — AI uses this plus new_content to regenerate title/description/tags."),
+        Field(description="Optional hint about the new content. Only used as a fallback if new_title/new_description/new_tags are left blank."),
     ] = None,
 ) -> dict:
-    """Edit an existing asset. Look it up by asset_id or title. If
-    new_content is given, AI regenerates the title, description, and tags
-    for it (using `hint` as guidance) and stores the full new asset."""
+    """Edit an existing asset. Look it up by asset_id or current_title. If
+    new_content is given, decide new_title/new_description/new_tags
+    yourself by reasoning about it — leave them blank only if you can't
+    reason (falls back to VATA_LLM_MODEL or a local heuristic)."""
     try:
         if new_content is not None:
-            decision = await ai_service.decide_asset_metadata(new_content, hint, None)
+            decision = await ai_service.decide_asset_metadata(
+                new_content, description=new_description or hint, tags=new_tags, title=new_title
+            )
             return category_service.update_asset_record(
                 asset_id,
-                title,
+                current_title,
                 {
                     "title": decision["title"],
                     "content": new_content,
@@ -197,7 +218,7 @@ async def vata_edit_asset(
                     "tags": decision["tags"],
                 },
             )
-        return category_service.update_asset_record(asset_id, title, {})
+        return category_service.update_asset_record(asset_id, current_title, {})
     except VataNotFoundError as e:
         return _error(e)
 
@@ -267,12 +288,19 @@ async def vata_replace_category(
 
 @mcp.prompt(name="vata-save")
 def vata_save_prompt(content: str, description: str = "") -> str:
-    """Save a link or note to Vata (AI files it under a category automatically)."""
+    """Save a link or note to Vata — you (the assistant) decide the title, category, description, and tags."""
     return (
-        f"Call the vata_save tool with content={content!r}"
-        + (f" and description={description!r}" if description else "")
-        + ". Do not ask the user for a category — the tool decides that on its own. "
-        "Report back the title it generated and the category it was filed under."
+        f"Save this to Vata: content={content!r}"
+        + (f", with this hint from the user: {description!r}" if description else "")
+        + ". First call vata_list_categories to see what categories already exist. "
+        "Then decide yourself: a short title, which existing category this fits into "
+        "(reuse one if it reasonably fits) or a short new category name if none fit, "
+        "a one-sentence description of the content in your own words, and up to 5 "
+        "lowercase tags. Call vata_save passing title/category/description/tags "
+        "explicitly — don't leave them blank, you're the one deciding this, not the "
+        "tool. Only pass category_description if you picked a brand-new category. "
+        "Never ask the user which category to use — decide it yourself. Report back "
+        "the title and category you chose."
     )
 
 
