@@ -1,77 +1,138 @@
-# Vata
+# vata-mcp
 
-Vata is a local-first Knowledge Graph application built with FastAPI and React.
+Vata exposed as an MCP server: save/get/find plus full CRUD, with
+categories decided entirely by AI (never a user-facing concept).
 
-## Project Structure
+This branch is MCP-only — the original FastAPI + React app lives on
+`master`. Design docs: [VATA_MCP_PLAN.md](VATA_MCP_PLAN.md),
+[VATA_SCHEMA.md](VATA_SCHEMA.md), [VATA_DATAFLOW.md](VATA_DATAFLOW.md).
 
-- `frontend/`: React + Vite source code (TypeScript + SWC).
-- `src/vata/`: Python backend source code.
-  - `main.py`: FastAPI server logic.
-  - `cli.py`: Typer CLI entry point.
-  - `frontend_dist/`: Location where the production frontend build is served from.
+## Current status
 
-## Getting Started
+Running locally for personal use, on this machine, right now:
 
-### 1. Build the Frontend
+- **Database**: real, persistent MongoDB Community Server, installed
+  locally via `winget install MongoDB.Server`, running as a Windows
+  service on `mongodb://localhost:27017`. No account, no internet
+  dependency, no cost. (Falls back to in-memory `mongomock` automatically
+  if `VATA_MONGODB_URI` isn't set — useful for quick throwaway testing.)
+- **AI**: category/summary/tag decisions use a local keyword-overlap
+  heuristic by default — no LLM API key needed. Set `VATA_LLM_MODEL`
+  (litellm-style model string, e.g. `gpt-4o-mini`) plus the provider's API
+  key env var to switch to a real LLM later.
+- **Client wiring**: `.mcp.json` at the repo root configures Claude
+  Code to launch this server via stdio automatically when you're working
+  in this folder — nothing to run manually.
+- **Auth**: not needed for this setup. Bearer-token auth
+  (`VATA_MCP_TOKEN`, see `src/vata_mcp/auth.py`) only matters if this ever
+  gets exposed over HTTP to something other than your own local client —
+  stdio-to-local-process has no network exposure to protect against.
 
-Navigate to the `frontend` directory, install dependencies, and build the static assets:
+Remote hosting (Render + MongoDB Atlas) is documented below for later, if
+you ever want this reachable from somewhere other than this machine — it's
+not required for personal local use and isn't currently deployed.
+
+## Deploying remotely (optional, free tier, ~15 min)
+
+1. **MongoDB Atlas** (free M0 cluster): create one at
+   [mongodb.com/atlas](https://www.mongodb.com/atlas), create a database
+   user, allow network access from anywhere (`0.0.0.0/0` — Render's egress
+   IPs aren't static on the free plan), and copy the `mongodb+srv://...`
+   connection string.
+2. **Generate a token**: anything long and random, e.g.
+   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+3. **Push this repo to GitHub**, then in Render: New → Blueprint → point
+   at the repo. `render.yaml` at the root defines the service. Render will
+   prompt for the `sync: false` env vars (`VATA_MCP_TOKEN`,
+   `VATA_MONGODB_URI`, optionally `VATA_LLM_MODEL` + its provider API key)
+   — paste them in.
+4. **Deploy.** Render builds with `pip install -e ".[llm]"` and runs
+   `python -m vata_mcp.server`, which binds to Render's injected `PORT`.
+5. **Connect a client**: point Claude Desktop/Code or Gemini CLI at
+   `https://<your-service>.onrender.com/mcp/` as a remote MCP server, with
+   header `Authorization: Bearer <your token>`.
+
+Free-tier caveat: Render's free web services sleep after 15 min idle: the
+first request after a while has cold-start latency (10-30s). Acceptable
+for personal use; not for anything latency-sensitive.
+
+## Local setup (personal use)
 
 ```bash
-cd frontend
-npm install
-npm run build
+# 1. Local MongoDB (one-time, Windows):
+winget install MongoDB.Server
+# runs as a Windows service automatically, listens on localhost:27017
+
+# 2. This project:
+python -m venv venv
+./venv/Scripts/pip install -e .        # Windows
+# source venv/bin/activate && pip install -e .   # macOS/Linux
 ```
 
-This will output the compiled React app into `src/vata/frontend_dist/`.
+Claude Code picks up `.mcp.json` in this repo automatically — no manual
+server launch needed. It points at `venv/Scripts/python.exe` and sets
+`VATA_MONGODB_URI=mongodb://localhost:27017`.
 
-### 2. Install the Python Package
+To run it by hand instead (e.g. for other MCP clients):
 
-Return to the root directory and install `vata` in editable mode:
+**Stdio:**
 
 ```bash
-cd ..
-pip install -e .
+VATA_MONGODB_URI=mongodb://localhost:27017 ./venv/Scripts/python -m vata_mcp.server
 ```
 
-### 3. Run the Application
-
-Start the Vata server and open the UI automatically:
+**HTTP (for testing with curl / remote clients):**
 
 ```bash
-vata start
+VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:27017 ./venv/Scripts/python -m vata_mcp.server
 ```
 
-The application will be available at [http://127.0.0.1:8000](http://127.0.0.1:8000).
+## Environment variables
 
-## Development
+| Variable | Default | Purpose |
+|---|---|---|
+| `VATA_MONGODB_URI` | unset (uses `mongomock`) | Real MongoDB connection string |
+| `VATA_MONGODB_DB` | `vata` | Database name |
+| `VATA_LLM_MODEL` | unset (uses heuristic) | litellm model string for real AI decisions |
+| `VATA_MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
+| `VATA_MCP_HOST` | `0.0.0.0` | HTTP transport bind host |
+| `VATA_MCP_PORT` | `8765` | HTTP transport bind port (local only — Render's `PORT` takes priority) |
+| `VATA_MCP_TOKEN` | unset (auth disabled) | Shared bearer token required on every HTTP request |
 
-For a live development experience with hot-reloading on both frontend and backend:
+## Tools
 
-### 1. Start the Backend (FastAPI)
+| Tool | Slash prompt | Notes |
+|---|---|---|
+| `vata_save` | `/vata-save` | No `category` arg — AI decides |
+| `vata_get` | `/vata-get` | asset_id / category_id / neither |
+| `vata_find` | `/vata-find` | BM25 + optional LLM re-rank |
+| `vata_suggest` | — | Preview AI decision without saving |
+| `vata_edit_asset` | — | Patch content/summary/tags |
+| `vata_delete_asset` | — | Requires `confirm: true` |
+| `vata_delete_category` | — | Requires `confirm: true` |
+| `vata_rename_category` | — | Admin/AI maintenance use |
+| `vata_link_asset` / `vata_unlink_asset` | — | Many-to-many membership |
+| `vata_replace_category` | — | Bulk replace |
 
-From the **root directory** (not the `frontend` folder):
+## Project structure
+
+```
+src/vata_mcp/
+  server.py              MCP server: tool + prompt registration
+  services/
+    storage.py           Mongo/mongomock data access
+    category_service.py  Category/asset CRUD, many-to-many linking
+    decision_service.py  BM25 + optional LLM re-rank search
+    ai_service.py        AI category/summary/tag decisions
+scripts/
+  smoke_test.py          End-to-end test against the dummy DB
+```
+
+## Smoke test
 
 ```bash
-uvicorn vata.main:app --app-dir src --reload --port 8000
+./venv/Scripts/python scripts/smoke_test.py
 ```
 
-### 2. Start the Frontend (Vite)
-
-In a **new terminal window**, navigate to the `frontend` directory:
-
-```bash
-cd frontend
-npm run dev
-```
-
-The frontend will be available at [http://localhost:5173](http://localhost:5173). It is pre-configured to proxy API requests to the backend on port 8000.
-
-## API Testing Guide
-
-For a step-by-step backend run and API testing guide, see [README_API_TESTING.md](README_API_TESTING.md).
-
-## Tech Stack
-
-- **Backend**: Python 3.12, FastAPI, Uvicorn, Typer.
-- **Frontend**: React 18, Vite, TypeScript.
-- **Packaging**: Pyproject.toml (Hatchling).
+Exercises save → find → get → edit → link/unlink → delete end to end
+against the in-memory dummy DB, with no external services required.

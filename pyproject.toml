@@ -3,28 +3,25 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vata"
+name = "vata-mcp"
 version = "0.1.0"
-description = "Vata - A local-first knowledge graph application"
+description = "Vata as a hosted MCP server: save/get/find plus full CRUD, AI-managed categories"
 readme = "README.md"
-requires-python = ">=3.12"
-license = { text = "MIT" }
-authors = [
-    { name = "Vata Project Team" },
-]
+requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.111.0",
-    "uvicorn>=0.30.1",
-    "typer>=0.12.3",
-    "litellm",
-    "langchain",
-    "langchain-community",
-    "langchain-core",
-    "python-ulid",
+    "fastmcp>=3.0.0",
+    "pymongo>=4.0",
+    "dnspython>=2.0",
+    "mongomock>=4.0",
+    "python-ulid>=1.1",
+    "pydantic>=2.0",
 ]
+
+[project.optional-dependencies]
+llm = ["litellm"]
 
 [project.scripts]
-vata = "vata.cli:app"
+vata-mcp = "vata_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vata"]
+packages = ["src/vata_mcp"]

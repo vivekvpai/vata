@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "vata": {
+      "command": "c:/CODE/MY/vata/venv/Scripts/python.exe",
+      "args": ["-m", "vata_mcp.server"],
+      "env": {
+        "VATA_MONGODB_URI": "mongodb://localhost:27017"
+      }
+    }
+  }
+}

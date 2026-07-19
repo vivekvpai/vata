@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: vata-mcp
+    runtime: python
+    plan: free
+    buildCommand: pip install -e ".[llm]"
+    startCommand: python -m vata_mcp.server
+    envVars:
+      - key: VATA_MCP_TRANSPORT
+        value: http
+      - key: VATA_MCP_TOKEN
+        sync: false
+      - key: VATA_MONGODB_URI
+        sync: false
+      - key: VATA_MONGODB_DB
+        value: vata
+      - key: VATA_LLM_MODEL
+        sync: false

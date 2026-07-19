@@ -10,6 +10,10 @@ Run locally (dummy in-memory Mongo, heuristic AI, no external services):
 Point at real MongoDB Atlas + a real LLM later via env vars:
     VATA_MONGODB_URI=mongodb+srv://...   (else falls back to mongomock)
     VATA_LLM_MODEL=gpt-4o-mini            (else falls back to BM25/heuristic)
+
+Protect the HTTP transport with a shared bearer token (required once this
+is reachable on a public URL):
+    VATA_MCP_TOKEN=some-long-random-secret  (unset = auth disabled, stdio default)
 """
 
 import os
@@ -18,10 +22,11 @@ from fastmcp import FastMCP
 from pydantic import Field
 from typing import Annotated, Literal
 
+from .auth import build_auth_provider
 from .services import ai_service, category_service, decision_service, storage
 from .services.category_service import VataConflictError, VataNotFoundError
 
-mcp = FastMCP("Vata")
+mcp = FastMCP("Vata", auth=build_auth_provider())
 
 
 def _error(exc: Exception) -> dict:
@@ -235,8 +240,15 @@ def main() -> None:
     if transport == "stdio":
         mcp.run()
     else:
+        if not os.getenv("VATA_MCP_TOKEN"):
+            print(
+                "[vata-mcp] WARNING: VATA_MCP_TOKEN is not set — this HTTP server "
+                "has NO auth and anyone with the URL can call every tool, "
+                "including deletes. Set VATA_MCP_TOKEN before exposing this publicly."
+            )
         host = os.getenv("VATA_MCP_HOST", "0.0.0.0")
-        port = int(os.getenv("VATA_MCP_PORT", "8765"))
+        # Render/Railway/etc inject PORT; fall back to VATA_MCP_PORT for local runs.
+        port = int(os.getenv("PORT") or os.getenv("VATA_MCP_PORT", "8765"))
         mcp.run(transport=transport, host=host, port=port)
 
 
