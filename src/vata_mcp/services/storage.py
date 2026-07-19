@@ -206,3 +206,12 @@ def list_assets_in_category(category_id: str) -> list[dict]:
 
 def count_assets_in_category(category_id: str) -> int:
     return assets_col.count_documents({"category_id": category_id})
+
+
+def wipe_all() -> dict:
+    """Delete every category and asset. Does not attempt dropDatabase — some
+    Mongo users (e.g. scoped Atlas roles) aren't granted that privilege, so
+    this clears collection contents instead, which any read/write role can do."""
+    deleted_assets = assets_col.delete_many({}).deleted_count
+    deleted_categories = categories_col.delete_many({}).deleted_count
+    return {"deleted_categories": deleted_categories, "deleted_assets": deleted_assets}

@@ -1,20 +1,35 @@
 """End-to-end smoke test against the underlying services (bypasses the MCP
-transport layer for most calls, but exercises vata_describe through a real
-MCP client). Runs entirely against the in-memory mongomock dummy DB +
-heuristic AI — no external services required.
+transport layer for most calls, but exercises vata_describe/vata_clean
+through a real MCP client). Runs entirely against the in-memory mongomock
+dummy DB + heuristic AI by default — no external services required.
 
 Model: each asset belongs to exactly one category. vata_save takes a
 link/text `content` plus an optional `description` hint; AI generates the
 title, category, content description, and tags.
 
+WARNING: this test calls vata_clean, which wipes the entire database it's
+pointed at. If VATA_MONGODB_URI is already set in your environment when you
+run this, it WILL wipe that real database. To force running against a real
+DB anyway, pass --allow-real-db explicitly.
+
 Run: python scripts/smoke_test.py
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+if "--allow-real-db" not in sys.argv and os.getenv("VATA_MONGODB_URI"):
+    print(
+        "[smoke_test] Refusing to run: VATA_MONGODB_URI is set and this test "
+        "calls vata_clean, which would wipe that real database.\n"
+        "[smoke_test] Unset VATA_MONGODB_URI to run against the safe in-memory "
+        "dummy DB, or re-run with --allow-real-db if you really mean to wipe it."
+    )
+    sys.exit(1)
 
 from fastmcp import Client
 
@@ -169,6 +184,24 @@ async def main() -> None:
     check("vata_describe lists vata_save among tools", "vata_save" in describe_result["tools"], str(describe_result["tools"]))
     check("vata_describe lists vata-find among prompts", "vata-find" in describe_result["prompts"], str(describe_result["prompts"]))
     print(f"  -> describe: {describe_result['storage_backend']}, {describe_result['ai_backend']}, auth_enabled={describe_result['auth_enabled']}")
+
+    # 15. vata_clean: disabled without VATA_CLEAN_PASSWORD, wrong password refused, correct password wipes everything
+    async with Client(mcp) as client:
+        disabled_result = (await client.call_tool("vata_clean", {"password": "anything"})).data
+    check("vata_clean is disabled when VATA_CLEAN_PASSWORD is unset", disabled_result.get("error_type") == "RuntimeError", str(disabled_result))
+
+    os.environ["VATA_CLEAN_PASSWORD"] = "vata-smoke-test-password"
+    async with Client(mcp) as client:
+        wrong_pw_result = (await client.call_tool("vata_clean", {"password": "wrong-one"})).data
+    check("vata_clean refuses a wrong password", wrong_pw_result.get("error_type") == "PermissionError", str(wrong_pw_result))
+    check("vata_clean did not touch data on wrong password", category_service.get_stats()["assets"] > 0, str(category_service.get_stats()))
+
+    async with Client(mcp) as client:
+        clean_result = (await client.call_tool("vata_clean", {"password": "vata-smoke-test-password"})).data
+    check("vata_clean succeeds with the correct password", clean_result.get("message") == "All categories and assets deleted", str(clean_result))
+    final_stats = category_service.get_stats()
+    check("vata_clean wiped everything", final_stats["categories"] == 0 and final_stats["assets"] == 0, str(final_stats))
+    del os.environ["VATA_CLEAN_PASSWORD"]
 
     print("\n=== All smoke tests passed ===")
 

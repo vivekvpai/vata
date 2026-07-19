@@ -10,6 +10,8 @@ services:
         value: http
       - key: VATA_MCP_TOKEN
         sync: false
+      - key: VATA_CLEAN_PASSWORD
+        sync: false
       - key: VATA_MONGODB_URI
         sync: false
       - key: VATA_MONGODB_DB

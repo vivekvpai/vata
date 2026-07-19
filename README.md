@@ -99,6 +99,7 @@ VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:
 | `VATA_MCP_HOST` | `0.0.0.0` | HTTP transport bind host |
 | `VATA_MCP_PORT` | `8765` | HTTP transport bind port (local only — Render's `PORT` takes priority) |
 | `VATA_MCP_TOKEN` | unset (auth disabled) | Shared bearer token required on every HTTP request |
+| `VATA_CLEAN_PASSWORD` | unset (`vata_clean` disabled) | Password required by `vata_clean` to wipe the entire database |
 
 ## Data model
 
@@ -123,6 +124,7 @@ always address a specific asset by `asset_id` or by its exact `title`.
 | `vata_edit_asset` | — | Give `new_content` (+ optional `hint`) to regenerate title/description/tags, or edit by id/title directly |
 | `vata_delete_category` | — | Requires `confirm: true`. Deletes the category **and every asset inside it** |
 | `vata_delete_asset` | — | Requires `confirm: true`. Deletes only that one asset |
+| `vata_clean` | `/vata-clean` | Wipes **everything** (all categories + assets). Requires a password matching `VATA_CLEAN_PASSWORD`; disabled entirely if that env var isn't set |
 | `vata_replace_category` | — | Bulk replace all assets in a category |
 
 ## Project structure
@@ -146,5 +148,12 @@ scripts/
 ```
 
 Exercises save → list-categories → list-assets → edit-category → find →
-edit-asset → delete-asset → delete-category (cascading) → describe, end to
-end, against the in-memory dummy DB with no external services required.
+edit-asset → delete-asset → delete-category (cascading) → describe → clean,
+end to end, against the in-memory dummy DB with no external services
+required.
+
+**This test calls `vata_clean` and will wipe whatever database it's pointed
+at.** It refuses to run if `VATA_MONGODB_URI` is set in your environment,
+to avoid accidentally wiping a real database — unset it first, or pass
+`--allow-real-db` if you genuinely want to test against a real Mongo
+instance (e.g. a scratch/throwaway one).

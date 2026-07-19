@@ -254,3 +254,8 @@ def get_stats() -> dict:
         "assets": storage.count_assets(),
         "version": VATA_MCP_VERSION,
     }
+
+
+def wipe_all_data() -> dict:
+    result = storage.wipe_all()
+    return {"message": "All categories and assets deleted", **result}

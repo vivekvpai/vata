@@ -26,6 +26,7 @@ _STOPWORDS = {
 }
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+_URL_NOISE_WORDS = {"http", "https", "www", "com", "org", "net", "io", "co"}
 
 
 def is_link(content: str) -> bool:
@@ -76,7 +77,10 @@ def _clean_json(content: str) -> str:
 
 
 def _keywords(text: str, top_n: int = 5) -> list[str]:
-    words = [w.lower() for w in _WORD_RE.findall(text) if w.lower() not in _STOPWORDS and len(w) > 2]
+    words = [
+        w.lower() for w in _WORD_RE.findall(text)
+        if w.lower() not in _STOPWORDS and w.lower() not in _URL_NOISE_WORDS and len(w) > 2
+    ]
     counts = Counter(words)
     return [w for w, _ in counts.most_common(top_n)]
 
@@ -115,16 +119,17 @@ def _heuristic_title(content: str, user_description: str) -> str:
 
 
 def _heuristic_description(content: str, user_description: str) -> str:
-    """A fuller one-liner distinct from the title — always mentions what the
-    content actually is (a link vs. text), not just a copy of the hint."""
+    """A fuller one-liner distinct from the title. Never quotes the user's
+    hint verbatim — synthesizes a new sentence from keywords extracted out
+    of the content + hint together, so the stored description is always
+    Vata's own wording, not a copy-paste of what was given."""
+    keywords = _keywords(f"{content} {user_description}", top_n=6)
+    topic = ", ".join(keywords[:4]) if keywords else "this item"
+
     if is_link(content):
         link = content.strip()
-        if user_description:
-            return _truncate_words(f"Link to {link} — {user_description}", 200)
-        return f"Link: {link}"
-    if user_description:
-        return _truncate_words(f"{user_description} ({content})", 200)
-    return _truncate_words(content, 200)
+        return _truncate_words(f"A saved link about {topic}. ({link})", 200)
+    return _truncate_words(f"A note about {topic}.", 200)
 
 
 def _heuristic_category(content: str, user_description: str, tags: list[str]) -> str:

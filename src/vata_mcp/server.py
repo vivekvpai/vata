@@ -3,7 +3,7 @@
 A personal link/notes archive exposed as MCP tools + slash prompts:
 `vata-save`, `vata-list-categories`, `vata-list-assets`, `vata-edit-category`,
 `vata-edit-asset`, `vata-delete-category`, `vata-delete-asset`, `vata-find`,
-`vata-describe`, `vata-stats`.
+`vata-describe`, `vata-stats`, `vata-clean`.
 
 Categories are fully AI-managed: `vata_save` never takes a category
 argument. Each asset belongs to exactly one category — deleting a category
@@ -20,8 +20,12 @@ Point at real MongoDB Atlas + a real LLM later via env vars:
 Protect the HTTP transport with a shared bearer token (required once this
 is reachable on a public URL):
     VATA_MCP_TOKEN=some-long-random-secret  (unset = auth disabled, stdio default)
+
+vata_clean (full database wipe) requires a separate password, set via:
+    VATA_CLEAN_PASSWORD=some-password  (unset = vata_clean refuses to run at all)
 """
 
+import hmac
 import os
 
 from fastmcp import FastMCP
@@ -226,6 +230,22 @@ async def vata_delete_asset(
 
 
 @mcp.tool
+async def vata_clean(
+    password: Annotated[str, Field(description="Confirmation password. Must match the server's configured VATA_CLEAN_PASSWORD.")],
+) -> dict:
+    """Wipe the entire database: every category and every asset, gone.
+    Requires the correct password — set via the VATA_CLEAN_PASSWORD env var
+    on the server. Wrong password or the env var not being set at all both
+    refuse the wipe."""
+    expected = os.getenv("VATA_CLEAN_PASSWORD")
+    if not expected:
+        return _error(RuntimeError("vata_clean is disabled: VATA_CLEAN_PASSWORD is not set on the server"))
+    if not hmac.compare_digest(password, expected):
+        return _error(PermissionError("Incorrect password — database was not touched"))
+    return category_service.wipe_all_data()
+
+
+@mcp.tool
 async def vata_replace_category(
     category_id: Annotated[str, Field(description="Category whose contents will be wholesale replaced.")],
     data: Annotated[
@@ -292,6 +312,18 @@ def vata_stats_prompt() -> str:
 def vata_describe_prompt() -> str:
     """Describe what this Vata MCP server is and how it's configured."""
     return "Call the vata_describe tool and summarize what Vata is, its available tools/prompts, and its current storage/AI/auth configuration."
+
+
+@mcp.prompt(name="vata-clean")
+def vata_clean_prompt() -> str:
+    """Wipe the entire database (all categories and assets). Destructive."""
+    return (
+        "The user wants to wipe the entire Vata database. Ask them for the clean "
+        "password if they haven't given it yet, then call the vata_clean tool with "
+        "that password. If it returns an error (wrong password, or the feature is "
+        "disabled because VATA_CLEAN_PASSWORD isn't set on the server), report that "
+        "clearly and do not retry silently."
+    )
 
 
 def main() -> None:
