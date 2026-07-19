@@ -11,6 +11,8 @@ build/
 
 # --- Env / secrets ---
 .env
+.env.*
+*.credentials
 
 # --- IDEs / Editors ---
 .vscode/
