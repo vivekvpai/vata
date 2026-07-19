@@ -6,10 +6,10 @@ Runs fully on BM25 alone (no LLM required) when no model is configured.
 
 import json
 import math
-import os
 import re
 from collections import Counter
 
+from .. import config
 from . import storage
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
@@ -19,7 +19,7 @@ _BM25_B = 0.75
 _TOP_K_CATEGORIES = 5
 _TOP_K_ASSETS_PER_CATEGORY = 15
 
-_LLM_MODEL = os.getenv("VATA_LLM_MODEL")
+_LLM_MODEL = config.get("VATA_LLM_MODEL")
 
 
 def _tokenize(text: str) -> list[str]:

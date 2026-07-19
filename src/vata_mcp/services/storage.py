@@ -10,13 +10,14 @@ document) — no many-to-many join collection. Deleting a category always
 deletes its assets too.
 """
 
-import os
 from datetime import datetime, timezone
 
 from ulid import ULID
 
-_MONGODB_URI = os.getenv("VATA_MONGODB_URI")
-_DB_NAME = os.getenv("VATA_MONGODB_DB", "vata")
+from .. import config
+
+_MONGODB_URI = config.get("VATA_MONGODB_URI")
+_DB_NAME = config.get("VATA_MONGODB_DB", "vata")
 
 _USING_REAL_MONGODB = bool(_MONGODB_URI)
 

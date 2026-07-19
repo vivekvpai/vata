@@ -22,12 +22,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-if "--allow-real-db" not in sys.argv and os.getenv("VATA_MONGODB_URI"):
+from vata_mcp import config as _vata_config  # noqa: E402 (import after sys.path setup)
+
+_configured_uri = _vata_config.get("VATA_MONGODB_URI")
+if "--allow-real-db" not in sys.argv and _configured_uri:
     print(
-        "[smoke_test] Refusing to run: VATA_MONGODB_URI is set and this test "
+        f"[smoke_test] Refusing to run: VATA_MONGODB_URI is set (via "
+        f"{_vata_config.describe_source('VATA_MONGODB_URI')}) and this test "
         "calls vata_clean, which would wipe that real database.\n"
-        "[smoke_test] Unset VATA_MONGODB_URI to run against the safe in-memory "
-        "dummy DB, or re-run with --allow-real-db if you really mean to wipe it."
+        "[smoke_test] Unset it (env var or config file) to run against the "
+        "safe in-memory dummy DB, or re-run with --allow-real-db if you "
+        "really mean to wipe it."
     )
     sys.exit(1)
 

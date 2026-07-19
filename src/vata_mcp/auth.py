@@ -7,9 +7,10 @@ If VATA_MCP_TOKEN is unset, auth is disabled (local/stdio dev default).
 """
 
 import hmac
-import os
 
 from fastmcp.server.auth.auth import AccessToken, TokenVerifier
+
+from . import config
 
 
 class StaticTokenVerifier(TokenVerifier):
@@ -24,7 +25,7 @@ class StaticTokenVerifier(TokenVerifier):
 
 
 def build_auth_provider() -> StaticTokenVerifier | None:
-    token = os.getenv("VATA_MCP_TOKEN")
+    token = config.get("VATA_MCP_TOKEN")
     if not token:
         return None
     return StaticTokenVerifier(token)

@@ -13,92 +13,105 @@ fit-or-new itself, and pass explicit values into `vata_save`. No
 only matters for callers that *can't* reason (a bare script calling the
 tool directly) — see [Tools](#tools) below.
 
-This branch is MCP-only — the original FastAPI + React app lives on
-`master`. Design docs: [VATA_MCP_PLAN.md](VATA_MCP_PLAN.md),
+Design docs: [VATA_MCP_PLAN.md](VATA_MCP_PLAN.md),
 [VATA_SCHEMA.md](VATA_SCHEMA.md), [VATA_DATAFLOW.md](VATA_DATAFLOW.md).
+Single-user per install — everyone who installs this runs their own
+server against their own database; there's no shared/multi-tenant
+service.
 
-## Current status
+## Install
 
-Running locally for personal use, on this machine, right now:
+```bash
+pipx install vata-mcp
+vata-mcp setup
+```
 
-- **Database**: real, persistent MongoDB Community Server, installed
-  locally via `winget install MongoDB.Server`, running as a Windows
-  service on `mongodb://localhost:27017`. No account, no internet
-  dependency, no cost. (Falls back to in-memory `mongomock` automatically
-  if `VATA_MONGODB_URI` isn't set — useful for quick throwaway testing.)
-- **AI**: the calling assistant (Claude, etc.) decides title/category/
-  description/tags itself and passes them into `vata_save` — no separate
-  LLM call, no API key needed for normal chat use. `VATA_LLM_MODEL` is
-  only a fallback for non-reasoning callers; unset by default, falls back
-  further to a local keyword-overlap heuristic if also unset.
-- **Client wiring**: `.mcp.json` at the repo root configures Claude
-  Code to launch this server via stdio automatically when you're working
-  in this folder — nothing to run manually.
-- **Auth**: not needed for this setup. Bearer-token auth
-  (`VATA_MCP_TOKEN`, see `src/vata_mcp/auth.py`) only matters if this ever
-  gets exposed over HTTP to something other than your own local client —
-  stdio-to-local-process has no network exposure to protect against.
+The setup wizard walks you through picking a MongoDB (local or Atlas,
+validated live), an optional fallback LLM, an optional access token, and
+an optional `/vata-clean` password — then prints a ready-to-paste MCP
+client config block. Full walkthrough, including MongoDB installation, in
+[SETUP.md](SETUP.md). Per-client config instructions (Claude Desktop/Code
+confirmed working; ChatGPT/Windsurf/Gemini attempted, not confirmed) in
+[CLIENT_SETUP.md](CLIENT_SETUP.md).
 
-Remote hosting (Render + MongoDB Atlas) is documented below for later, if
-you ever want this reachable from somewhere other than this machine — it's
-not required for personal local use and isn't currently deployed.
+Settings are saved to a config file (env vars still override it if set —
+see [Environment variables](#environment-variables)), so `vata-mcp setup`
+only needs to run once.
 
 ## Deploying remotely (optional, free tier, ~15 min)
 
-1. **MongoDB Atlas** (free M0 cluster): create one at
-   [mongodb.com/atlas](https://www.mongodb.com/atlas), create a database
-   user, allow network access from anywhere (`0.0.0.0/0` — Render's egress
-   IPs aren't static on the free plan), and copy the `mongodb+srv://...`
-   connection string.
-2. **Generate a token**: anything long and random, e.g.
-   `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Only needed if you want Vata reachable from somewhere other than the
+machine it's installed on (e.g. so a phone or a second computer can use
+it too). Personal local use does not need this section at all.
+
+1. **MongoDB Atlas** (free M0 cluster): see [SETUP.md §2 Option
+   B](SETUP.md#option-b--mongodb-atlas-free-cloud-tier-needed-if-you-want-to-access-vata-from-more-than-one-device-or-host-it-remotely).
+2. **Generate a token**: `vata-mcp setup` can do this for you, or manually
+   via `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 3. **Push this repo to GitHub**, then in Render: New → Blueprint → point
    at the repo. `render.yaml` at the root defines the service. Render will
    prompt for the `sync: false` env vars (`VATA_MCP_TOKEN`,
    `VATA_MONGODB_URI`, optionally `VATA_LLM_MODEL` + its provider API key)
    — paste them in.
 4. **Deploy.** Render builds with `pip install -e ".[llm]"` and runs
-   `python -m vata_mcp.server`, which binds to Render's injected `PORT`.
-5. **Connect a client**: point Claude Desktop/Code or Gemini CLI at
-   `https://<your-service>.onrender.com/mcp/` as a remote MCP server, with
-   header `Authorization: Bearer <your token>`.
+   `vata-mcp`, which binds to Render's injected `PORT`.
+5. **Connect a client**: see [CLIENT_SETUP.md](CLIENT_SETUP.md)'s "Remote
+   / hosted deployment" section.
 
 Free-tier caveat: Render's free web services sleep after 15 min idle: the
 first request after a while has cold-start latency (10-30s). Acceptable
 for personal use; not for anything latency-sensitive.
 
-## Local setup (personal use)
+## Running from source (contributing / modifying the code)
+
+If you're changing Vata's own code rather than just using it:
 
 ```bash
-# 1. Local MongoDB (one-time, Windows):
-winget install MongoDB.Server
-# runs as a Windows service automatically, listens on localhost:27017
-
-# 2. This project:
+git clone <this repo> && cd vata
 python -m venv venv
 ./venv/Scripts/pip install -e .        # Windows
 # source venv/bin/activate && pip install -e .   # macOS/Linux
 ```
 
-Claude Code picks up `.mcp.json` in this repo automatically — no manual
-server launch needed. It points at `venv/Scripts/python.exe` and sets
-`VATA_MONGODB_URI=mongodb://localhost:27017`.
+The installed `vata-mcp` command works the same as the packaged version
+(`vata-mcp setup`, then `vata-mcp` to run). Editable install means changes
+to `src/vata_mcp/` take effect without reinstalling.
 
-To run it by hand instead (e.g. for other MCP clients):
+Claude Code also picks up a project-scoped `.mcp.json` automatically if
+one exists at the repo root — useful during development to point directly
+at your local venv without going through the installed command:
 
-**Stdio:**
+```json
+{
+  "mcpServers": {
+    "vata": {
+      "command": "c:/path/to/venv/Scripts/python.exe",
+      "args": ["-m", "vata_mcp.server"],
+      "env": { "VATA_MONGODB_URI": "mongodb://localhost:27017" }
+    }
+  }
+}
+```
+
+**Stdio (default, for MCP clients):**
 
 ```bash
-VATA_MONGODB_URI=mongodb://localhost:27017 ./venv/Scripts/python -m vata_mcp.server
+./venv/Scripts/python -m vata_mcp.server
 ```
 
 **HTTP (for testing with curl / remote clients):**
 
 ```bash
-VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 VATA_MONGODB_URI=mongodb://localhost:27017 ./venv/Scripts/python -m vata_mcp.server
+VATA_MCP_TRANSPORT=http VATA_MCP_PORT=8765 ./venv/Scripts/python -m vata_mcp.server
 ```
 
 ## Environment variables
+
+Every setting below can be set as an environment variable, or saved to the
+config file via `vata-mcp setup` (env var always wins if both are set).
+Config file location: `%APPDATA%\vata-mcp\config.json` (Windows),
+`~/Library/Application Support/vata-mcp/config.json` (macOS),
+`~/.config/vata-mcp/config.json` (Linux) — see `src/vata_mcp/config.py`.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -142,7 +155,11 @@ the design note above. You can always address a specific asset by
 
 ```
 src/vata_mcp/
+  cli.py                 `vata-mcp` entry point: dispatches to server or setup
+  setup_wizard.py        `vata-mcp setup` interactive wizard
+  config.py              env var -> config file -> default settings loader
   server.py              MCP server: tool + prompt registration
+  auth.py                Static bearer-token verifier for HTTP transport
   services/
     storage.py           Mongo/mongomock data access (one category per asset)
     category_service.py  Category/asset CRUD, id-or-name/title resolution
@@ -164,7 +181,9 @@ end to end, against the in-memory dummy DB with no external services
 required.
 
 **This test calls `vata_clean` and will wipe whatever database it's pointed
-at.** It refuses to run if `VATA_MONGODB_URI` is set in your environment,
-to avoid accidentally wiping a real database — unset it first, or pass
-`--allow-real-db` if you genuinely want to test against a real Mongo
-instance (e.g. a scratch/throwaway one).
+at.** It refuses to run if `VATA_MONGODB_URI` is set — via environment
+variable *or* the config file `vata-mcp setup` writes — to avoid
+accidentally wiping a real database. Unset it (or don't run `vata-mcp
+setup` first) to use the safe in-memory default, or pass `--allow-real-db`
+if you genuinely want to test against a real Mongo instance (e.g. a
+scratch/throwaway one).

@@ -35,6 +35,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from typing import Annotated, Literal
 
+from . import config
 from .auth import build_auth_provider
 from .services import ai_service, category_service, decision_service, storage
 from .services.category_service import VataConflictError, VataNotFoundError
@@ -164,7 +165,7 @@ async def vata_describe() -> dict:
         "prompts": sorted(p.name for p in prompts),
         "storage_backend": storage.backend_info(),
         "ai_backend": ai_service.backend_info(),
-        "auth_enabled": bool(os.getenv("VATA_MCP_TOKEN")),
+        "auth_enabled": bool(config.get("VATA_MCP_TOKEN")),
     }
 
 
@@ -258,7 +259,7 @@ async def vata_clean(
     Requires the correct password — set via the VATA_CLEAN_PASSWORD env var
     on the server. Wrong password or the env var not being set at all both
     refuse the wipe."""
-    expected = os.getenv("VATA_CLEAN_PASSWORD")
+    expected = config.get("VATA_CLEAN_PASSWORD")
     if not expected:
         return _error(RuntimeError("vata_clean is disabled: VATA_CLEAN_PASSWORD is not set on the server"))
     if not hmac.compare_digest(password, expected):
@@ -355,19 +356,20 @@ def vata_clean_prompt() -> str:
 
 
 def main() -> None:
-    transport = os.getenv("VATA_MCP_TRANSPORT", "stdio")
+    transport = config.get("VATA_MCP_TRANSPORT", "stdio")
     if transport == "stdio":
         mcp.run()
     else:
-        if not os.getenv("VATA_MCP_TOKEN"):
+        if not config.get("VATA_MCP_TOKEN"):
             print(
                 "[vata-mcp] WARNING: VATA_MCP_TOKEN is not set — this HTTP server "
                 "has NO auth and anyone with the URL can call every tool, "
                 "including deletes. Set VATA_MCP_TOKEN before exposing this publicly."
             )
-        host = os.getenv("VATA_MCP_HOST", "0.0.0.0")
-        # Render/Railway/etc inject PORT; fall back to VATA_MCP_PORT for local runs.
-        port = int(os.getenv("PORT") or os.getenv("VATA_MCP_PORT", "8765"))
+        host = config.get("VATA_MCP_HOST", "0.0.0.0")
+        # Render/Railway/etc inject PORT (always a raw env var, not user config);
+        # fall back to VATA_MCP_PORT for local runs.
+        port = int(os.getenv("PORT") or config.get("VATA_MCP_PORT", "8765"))
         mcp.run(transport=transport, host=host, port=port)
 
 

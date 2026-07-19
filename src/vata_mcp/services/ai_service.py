@@ -17,14 +17,14 @@ Content saved via vata_save is usually a link, sometimes plain text.
 """
 
 import json
-import os
 import re
 from collections import Counter
 from urllib.parse import urlparse
 
+from .. import config
 from . import storage
 
-_LLM_MODEL = os.getenv("VATA_LLM_MODEL")
+_LLM_MODEL = config.get("VATA_LLM_MODEL")
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for",
     "is", "are", "was", "were", "be", "been", "this", "that", "with", "as",

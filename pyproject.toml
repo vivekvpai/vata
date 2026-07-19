@@ -4,10 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vata-mcp"
-version = "0.1.0"
-description = "Vata as a hosted MCP server: save/get/find plus full CRUD, AI-managed categories"
+version = "0.2.0"
+description = "A personal link/notes archive exposed as an MCP server — the calling LLM decides categorization, you bring your own MongoDB"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["mcp", "model-context-protocol", "llm", "notes", "bookmarks", "mongodb", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications",
+    "Topic :: Database",
+]
 dependencies = [
     "fastmcp>=3.0.0",
     "pymongo>=4.0",
@@ -20,8 +32,12 @@ dependencies = [
 [project.optional-dependencies]
 llm = ["litellm"]
 
+[project.urls]
+Homepage = "https://github.com/vivekvpai/vata/tree/mcp"
+Repository = "https://github.com/vivekvpai/vata"
+
 [project.scripts]
-vata-mcp = "vata_mcp.server:main"
+vata-mcp = "vata_mcp.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vata_mcp"]
